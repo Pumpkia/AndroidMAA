@@ -1,0 +1,36 @@
+{
+  "format_version": 2,
+  "name": "QQ作业",
+  "category": "默认",
+  "prerequisites": [],
+  "device_size": [
+    720,
+    1600
+  ],
+  "steps": [
+    {
+      "name": "步骤 1",
+      "recognition": "TemplateMatch",
+      "action": "Click",
+      "template": "jobs/QQ作业/步骤_1.png",
+      "roi": [
+        180,
+        320,
+        229,
+        210
+      ],
+      "expected": "",
+      "threshold": 0.8,
+      "target": [
+        274,
+        527
+      ],
+      "swipe_end": null,
+      "input_text": "",
+      "key": 4,
+      "duration": 300,
+      "pre_delay": 0,
+      "post_delay": 500
+    }
+  ]
+}

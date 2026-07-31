@@ -1,0 +1,60 @@
+{
+  "format_version": 2,
+  "name": "QQ作",
+  "category": "默认",
+  "prerequisites": [],
+  "device_size": [
+    720,
+    1600
+  ],
+  "steps": [
+    {
+      "name": "消息列表",
+      "recognition": "OCR",
+      "action": "Click",
+      "template": "jobs/QQ作业/消息列表.png",
+      "roi": [
+        62,
+        1470,
+        59,
+        39
+      ],
+      "expected": "消息",
+      "threshold": 0.8,
+      "target": [
+        89,
+        1488
+      ],
+      "swipe_end": null,
+      "input_text": "",
+      "key": 4,
+      "duration": 300,
+      "pre_delay": 0,
+      "post_delay": 500
+    },
+    {
+      "name": "搜索",
+      "recognition": "OCR",
+      "action": "Click",
+      "template": "",
+      "roi": [
+        292,
+        187,
+        144,
+        50
+      ],
+      "expected": "搜索",
+      "threshold": 0.8,
+      "target": [
+        351,
+        215
+      ],
+      "swipe_end": null,
+      "input_text": "",
+      "key": 4,
+      "duration": 300,
+      "pre_delay": 0,
+      "post_delay": 500
+    }
+  ]
+}

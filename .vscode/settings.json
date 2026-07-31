@@ -1,0 +1,24 @@
+{
+    "json.schemas": [
+        {
+            "fileMatch": [
+                "assets/resource/pipeline/*.json"
+            ],
+            "url": "./deps/tools/pipeline.schema.json"
+        },
+        {
+            "fileMatch": [
+                "assets/interface.json"
+            ],
+            "url": "./deps/tools/interface.schema.json"
+        }
+    ],
+    "json.validate.enable": true,
+    "[jsonc]": {
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "files.associations": {
+        "assets/resource/pipeline/*.json": "jsonc",
+        "assets/interface.json": "jsonc"
+    }
+}

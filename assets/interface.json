@@ -1,0 +1,52 @@
+﻿{
+    "interface_version": 2,
+    "name": "MaaQQLogin",
+    "description": "QQ 自动登录 - 基于 MaaFramework",
+    "contact": "",
+    "license": "MIT",
+    "version": "1.0.0",
+    "controller": [
+        {
+            "name": "安卓端",
+            "type": "Adb",
+            "display_short_side": 720,
+            "display_raw": false
+        }
+    ],
+    "resource": [
+        {
+            "name": "默认",
+            "path": [
+                "./resource"
+            ]
+        }
+    ],
+    "task": [
+        {
+            "name": "QQ登录",
+            "entry": "QQLogin"
+        },
+        {
+            "name": "切换账号登录",
+            "entry": "SwitchToPasswordLogin"
+        },
+        {
+            "name": "仅输入账号密码",
+            "entry": "EnterCredentials"
+        },
+        {
+            "name": "仅点击登录",
+            "entry": "ClickLogin"
+        }
+    ],
+    "option": {
+        "QQ账号": {
+            "type": "input",
+            "default": ""
+        },
+        "QQ密码": {
+            "type": "input",
+            "default": ""
+        }
+    }
+}

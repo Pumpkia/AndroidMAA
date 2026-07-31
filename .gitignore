@@ -1,0 +1,25 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Generated build and release output
+build/
+dist/
+release/
+.packaging/
+install/
+*.zip
+
+# Runtime logs and debug captures
+logs/
+assets/debug/
+*.log
+
+# 图片资源
+# 用 ImageCropper 截图后放入此目录
+
+# Downloaded MaaFramework runtime
+deps/bin/
+deps/share/
