@@ -1,136 +1,113 @@
-# QQ 自动登录 - MaaQQLogin
+# MaaQQLogin
 
-基于 [MaaFramework](https://github.com/MaaXYZ/MaaFramework) 的 QQ 桌面端自动登录工具。
+MaaQQLogin 是基于 [MaaFramework](https://github.com/MaaXYZ/MaaFramework) 的 Android ADB 自动化作业工作台，面向 QQ App 等移动端场景。它在一个窗口中完成设备截图、步骤录制、作业管理和队列回放。
 
 ## 环境要求
 
-- Windows 10/11
-- Python 3.10+
-- 已安装 QQ（桌面版）
+- Windows 10/11（64 位）
+- Python 3.10 或更高版本
+- 已安装 QQ App 的 Android 真机或模拟器
+- 设备已开启开发者选项和 USB 调试，并完成 ADB 授权
 
-## 快速开始
+项目自带 Windows `platform-tools`。也可以使用系统 `PATH` 中的 `adb`。
 
-### 第一步：准备模板图片
+## 界面布局
 
-1. 打开 QQ 登录窗口
-2. 运行 ImageCropper 工具连接 QQ 窗口进行截图：
-   ```bash
-   cd ImageCropper
-   python main.py
-   # 选择 Win32 → 找到 "QQ" 窗口
+- 顶部通过“步骤录制”和“步骤回放”在同一窗口内切换工作区。
+- 左侧始终显示设备预览，可选择 ADB 设备、刷新设备列表并截图。录制模式还提供框选模板、点击位置和滑动轨迹工具。
+- 右侧“步骤录制”工作区用于编排步骤、设置识别与动作参数、管理作业库以及保存或导出作业。
+- 右侧“步骤回放”工作区用于搜索作业、编辑执行队列、开始或停止任务，并查看实时执行日志。
+
+录制和回放共享当前设备、`jobs/` 作业库及 `assets/resource/image/jobs/` 模板库，切换工作区不会打开第二个主窗口。
+
+## 源码运行
+
+在项目根目录执行：
+
+```powershell
+python -m pip install -r tools/requirements.txt
+python tools/job_editor.py
+```
+
+也可以双击 `job-editor.bat` 启动。
+
+## 连接设备
+
+1. 启动 Android 模拟器，或通过 USB 连接已开启调试的真机。
+2. 在设备上接受 USB 调试授权。
+3. 在项目根目录检查连接状态：
+
+   ```powershell
+   .\platform-tools\adb.exe devices
    ```
-3. 框选并保存以下关键区域（按 S 保存）：
 
-| 模板图片 | 说明 |
-|---------|------|
-| `账号输入框.png` | QQ号输入框区域 |
-| `密码输入框.png` | 密码输入框区域 |
-| `登录按钮.png` | "登录"按钮 |
-| `账号密码登录.png` | 从二维码切换到账号密码的入口（新版QQ需要） |
-| `登录成功标志.png` | 登录成功后的某个固定元素（如主面板图标） |
+4. 确认设备状态为 `device`，而不是 `unauthorized` 或 `offline`。
+5. 启动工作台，在左侧“ADB 设备”中选择设备，点击“刷新”，再点击“截图”。
 
-4. 将截图放入 `assets/resource/image/` 目录
+## 基本使用
 
-### 第二步：修改配置
+### 录制作业
 
-编辑 `assets/resource/pipeline/login.json`：
-- 修改 `输入账号` 节点中的 QQ 号
-- 修改 `输入密码` 节点中的密码
-- 修改 `打开QQ` 节点中 QQ 的安装路径
+1. 在顶部选择“步骤录制”，新建作业或从“作业库”载入已有作业。
+2. 获取设备截图后，在左侧选择“框选模板”“点击位置”或“滑动轨迹”，并在预览中完成标记。
+3. 在右侧填写步骤名称，选择识别类型和动作类型，按需设置 OCR 文字、输入内容、阈值与延迟。
+4. 将步骤加入列表，调整顺序，并使用“在设备上预览此动作”检查单步效果。
+5. 点击“保存”。作业写入 `jobs/<分类>/`，模板写入 `assets/resource/image/jobs/<作业名>/`。
+6. 需要 Maa Pipeline 文件时，点击“导出”。
 
-编辑 `assets/interface.json`：
-- 根据你的 QQ 版本调整 `class_regex` 和 `window_regex`
-- 如果截图黑屏，尝试切换 `screencap` 方式
+支持的识别类型包括 `TemplateMatch`、`OCR` 和 `DirectHit`；支持的动作类型包括 `Click`、`Swipe`、`InputText`、`ClickKey` 和 `DoNothing`。
 
-### 第三步：运行
+### 回放作业
 
-```bash
-# 使用 MaaFramework CLI 运行
-MaaPiCli --interface=assets/interface.json
+1. 在顶部选择“步骤回放”。
+2. 从作业库选择任务并加入执行队列。
+3. 使用“上移”“下移”“移除”调整队列。
+4. 确认设备后点击“开始执行”，在执行日志中查看识别、动作和任务结果。
+5. 运行期间可点击“停止”；完成后可直接切回“步骤录制”继续修改。
 
-# 或使用 Python 脚本
-pip install MaaFw
-python -c "
-import maa
-from maa.toolkit import Toolkit
-from maa.resource import Resource
-from maa.controller import Win32Controller
+## 打包 Windows v1.1.0
 
-Toolkit.init()
-resource = Resource()
-resource.load('assets')
-controller = Win32Controller()
-controller.connect()
-tasker = maa.Tasker()
-tasker.bind(resource, controller)
-tasker.post_task('QQLogin')
-tasker.wait()
-"
+在项目根目录执行：
+
+```powershell
+python -m pip install -r tools/requirements.txt
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\build_release.ps1 -Version v1.1.0
 ```
 
-## 项目结构
+打包脚本会先运行单元测试，再使用 PyInstaller 生成：
 
+```text
+release/QQJobEditor-v1.1.0-win-x64.zip
 ```
+
+解压完整 ZIP 后运行 `QQJobEditor/QQJobEditor.exe`。不要只复制 EXE；`_internal/`、`assets/`、`jobs/` 和 `platform-tools/` 都是运行所需内容。
+
+## 目录结构
+
+```text
 MaaQQLogin/
-├── assets/
-│   ├── interface.json        # 项目配置（控制器、任务定义）
-│   └── resource/
-│       ├── image/            # 模板匹配用的截图
-│       │   ├── 账号输入框.png
-│       │   ├── 密码输入框.png
-│       │   ├── 登录按钮.png
-│       │   └── ...
-│       └── pipeline/
-│           └── login.json    # 登录流程定义
-├── tools/
-│   └── install.py            # 打包脚本
-└── README.md
+|-- assets/
+|   |-- config/                       # MaaFramework 运行选项
+|   `-- resource/
+|       |-- image/jobs/               # 录制生成的模板图片
+|       |-- model/ocr/                # OCR 模型与字符表
+|       `-- pipeline/                 # 导出的 Pipeline
+|-- jobs/                             # 作业 JSON 与分类目录
+|-- platform-tools/                   # Windows ADB 运行时
+|-- tools/
+|   |-- job_editor.py                 # 主窗口与步骤录制
+|   |-- job_runner_app.py             # 同窗步骤回放工作区
+|   |-- job_runner.py                 # MaaFramework 执行器
+|   |-- job_model.py                  # 作业模型与 Pipeline 导出
+|   |-- build_release.ps1             # Windows 打包脚本
+|   `-- requirements.txt              # Python 依赖
+|-- QQJobEditor.spec                  # PyInstaller 配置
+|-- job-editor.bat                    # 源码启动入口
+`-- README.md
 ```
 
 ## 注意事项
 
-- **不要用于他人账号**，仅用于学习 MaaFramework 的自动化技术
-- QQ 版本更新后界面可能变化，需要重新截图
-- 如果遇到验证码，Pipeline 会自动停止，需要手动处理
-- Win32 截图方式推荐优先尝试 `PrintWindow`，失败再换 `DXGI_DesktopDup`
-## QQ App 作业工作台
-
-`QQJobEditor.exe` 是一个单程序工作台，包含“用例录制”和“作业执行”两个界面。两个界面在同一进程内切换，并共享程序目录下唯一的 `jobs/` 作业库与 `assets/resource/image/jobs/` 模板库。
-
-```bash
-job-editor.bat
-# 或
-python tools/job_editor.py
-```
-
-用例录制：
-
-1. 选择 ADB 设备并点击“截图”。编辑器会按 MaaFramework 的坐标规则把截图短边归一化为 720。
-2. 选择“框选识别模板”，在 QQ 截图上框出按钮或图标，填写步骤名称后新增步骤。
-3. 使用“输入文本”快速添加 `InputText` 步骤；使用“等待延迟”添加纯等待步骤。
-4. 每个步骤都可以分别设置执行前延迟和执行后延迟，并可在设备上单步预览。
-5. 在“作业库”中填写分类，作业会按分类树展示。选中其他用例后可将其设为当前作业的前置用例，并调整执行顺序。
-6. 第一次点击“保存”会直接写入 `jobs/<分类>/<作业名>.maa_job.json`，继续编辑后再次点击“保存”会更新同一文件；只有“另存为”才会询问新路径。
-7. 保存作业后可以导出 Pipeline，也可以切换到“作业执行”界面直接运行。前置用例会递归拼接到当前作业之前，循环依赖会被拦截。
-
-作业执行：
-
-1. 从按分类展示的作业库中搜索并将作业加入执行队列。
-2. 调整队列顺序，选择 ADB 设备后点击“开始执行”。
-3. 界面会实时显示 MaaFramework 的识别、动作及任务结果；运行中可以停止。
-4. 点击“返回用例录制”可回到编辑界面，作业路径和模板路径不会改变。
-
-模板保存在 `assets/resource/image/jobs/`，作业保存在 `jobs/<分类>/`，Pipeline 保存在 `assets/resource/pipeline/`。
-
-支持的识别类型为 `TemplateMatch`、`OCR`、`DirectHit`；支持的动作类型为 `Click`、`Swipe`、`InputText`、`ClickKey`、`DoNothing`。导出的入口节点名会在完成提示中显示，可加入 `assets/interface.json` 的任务列表后由 Maa 通用 UI 执行。
-
-## 打包 Windows 程序
-
-在项目根目录运行：
-
-~~~powershell
-python -m pip install -r tools/requirements.txt
-powershell -ExecutionPolicy Bypass -File tools/build_release.ps1 -Version v1.0.0
-~~~
-
-脚本会先运行单元测试，然后生成 `release/QQJobEditor-v1.0.0-win-x64.zip`。解压后运行 `QQJobEditor/QQJobEditor.exe`；`assets/`、`jobs/` 和 `platform-tools/` 必须与程序一起保留。
+- 截图和坐标按 MaaFramework 的短边 720 规则归一化；设备分辨率或 QQ 界面变化后应重新检查模板。
+- `InputText` 内容会明文保存在作业 JSON 中，不要写入密码、Token 等敏感信息。
+- 仅对自己拥有或获授权的设备和账号执行自动化任务。
