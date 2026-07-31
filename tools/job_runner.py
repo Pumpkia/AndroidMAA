@@ -8,6 +8,7 @@ from typing import Callable
 
 from maa.context import ContextEventSink
 from maa.controller import AdbController
+from maa.define import MaaAdbInputMethodEnum
 from maa.resource import Resource
 from maa.tasker import Tasker, TaskerEventSink
 from maa.toolkit import Toolkit
@@ -83,11 +84,13 @@ class MaaJobRunner:
             raise RuntimeError(f"找不到 ADB 设备: {serial}")
 
         emit(f"连接设备：{device.name} ({device.address})")
+        emit("输入方式：ADB Shell（兼容模式）")
         controller_args = {
             "adb_path": device.adb_path,
             "address": device.address,
             "screencap_methods": device.screencap_methods,
-            "input_methods": device.input_methods,
+            # Maatouch may report success even when Android receives no text.
+            "input_methods": int(MaaAdbInputMethodEnum.AdbShell),
             "config": device.config,
         }
         packaged_agent = self.app_dir / "_internal" / "MaaAgentBinary"

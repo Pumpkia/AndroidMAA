@@ -65,19 +65,19 @@ python tools/job_editor.py
 4. 确认设备后点击“开始执行”，在执行日志中查看识别、动作和任务结果。
 5. 运行期间可点击“停止”；完成后可直接切回“步骤录制”继续修改。
 
-## 打包 Windows v1.1.0
+## 打包 Windows v1.1.1
 
 在项目根目录执行：
 
 ```powershell
 python -m pip install -r tools/requirements.txt
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\build_release.ps1 -Version v1.1.0
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\build_release.ps1 -Version v1.1.1
 ```
 
 打包脚本会先运行单元测试，再使用 PyInstaller 生成：
 
 ```text
-release/QQJobEditor-v1.1.0-win-x64.zip
+release/QQJobEditor-v1.1.1-win-x64.zip
 ```
 
 解压完整 ZIP 后运行 `QQJobEditor/QQJobEditor.exe`。不要只复制 EXE；`_internal/`、`assets/`、`jobs/` 和 `platform-tools/` 都是运行所需内容。

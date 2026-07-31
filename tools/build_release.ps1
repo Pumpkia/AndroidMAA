@@ -1,11 +1,13 @@
 param(
-    [string]$Version = "v1.1.0"
+    [string]$Version = "v1.1.1",
+    [ValidatePattern('^\.packaging(?:-[A-Za-z0-9._-]+)?$')]
+    [string]$StagingName = ".packaging-build"
 )
 
 $ErrorActionPreference = "Stop"
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$stagingRoot = Join-Path $projectRoot ".packaging"
+$stagingRoot = Join-Path $projectRoot $StagingName
 $workPath = Join-Path $stagingRoot "work"
 $distPath = Join-Path $stagingRoot "dist"
 $appPath = Join-Path $distPath "QQJobEditor"
