@@ -1,10 +1,10 @@
-﻿{
+{
     "interface_version": 2,
     "name": "MaaQQLogin",
     "description": "QQ 自动登录 - 基于 MaaFramework",
     "contact": "",
     "license": "MIT",
-    "version": "1.0.0",
+    "version": "2.1.0",
     "controller": [
         {
             "name": "安卓端",

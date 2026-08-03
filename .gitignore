@@ -24,3 +24,6 @@ assets/debug/
 # Downloaded MaaFramework runtime
 deps/bin/
 deps/share/
+
+# Retired browser prototype
+ui-preview/

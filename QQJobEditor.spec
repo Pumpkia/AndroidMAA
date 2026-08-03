@@ -10,14 +10,14 @@ maa_datas, maa_binaries, maa_hiddenimports = collect_all('maa')
 agent_binary_dir = Path(sys.prefix) / 'Lib' / 'site-packages' / 'MaaAgentBinary'
 
 a = Analysis(
-    ['tools\\job_editor.py'],
+    ['tools\\qt_workbench.py'],
     pathex=['tools'],
     binaries=maa_binaries,
     datas=[
         (str(agent_binary_dir), 'MaaAgentBinary'),
         *maa_datas,
     ],
-    hiddenimports=[*maa_hiddenimports, 'job_runner', 'job_runner_app'],
+    hiddenimports=[*maa_hiddenimports, 'job_runner', 'job_model', 'job_library'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

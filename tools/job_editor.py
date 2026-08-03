@@ -14,6 +14,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import cv2
 import numpy as np
 
+from job_library import JobLibrary
 from job_model import SMART_CATEGORIES, JobDocument, JobStep, safe_name, suggest_category
 
 
@@ -37,17 +38,17 @@ ACTION_LABELS = {
 }
 RECOGNITION_NAMES = {value: key for key, value in RECOGNITION_LABELS.items()}
 ACTION_NAMES = {value: key for key, value in ACTION_LABELS.items()}
-COLOR_BG = "#EEF1F5"
+COLOR_BG = "#F5F5F7"
 COLOR_SURFACE = "#FFFFFF"
-COLOR_SURFACE_ALT = "#F8FAFC"
-COLOR_HEADER = "#111827"
-COLOR_TEXT = "#1F2937"
-COLOR_MUTED = "#667085"
-COLOR_PRIMARY = "#0F766E"
-COLOR_PRIMARY_HOVER = "#115E59"
-COLOR_DANGER = "#B42318"
-COLOR_BORDER = "#D0D5DD"
-COLOR_CANVAS = "#101318"
+COLOR_SURFACE_ALT = "#F2F2F7"
+COLOR_HEADER = "#FBFBFD"
+COLOR_TEXT = "#1D1D1F"
+COLOR_MUTED = "#6E6E73"
+COLOR_PRIMARY = "#0068D9"
+COLOR_PRIMARY_HOVER = "#0057B8"
+COLOR_DANGER = "#D70015"
+COLOR_BORDER = "#D2D2D7"
+COLOR_CANVAS = "#161618"
 
 
 class AdbClient:
@@ -146,14 +147,15 @@ class JobEditor(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("MaaQQLogin - 自动化作业工作台")
-        self.geometry("1480x920")
-        self.minsize(1180, 760)
+        self.geometry("1600x940")
+        self.minsize(1320, 800)
 
         self.adb = AdbClient()
         self.document = JobDocument()
         self.current_path: Path | None = None
         self.current_image: np.ndarray | None = None
         self.photo: tk.PhotoImage | None = None
+        self.device_photo: tk.PhotoImage | None = None
         self.display_scale = 1.0
         self.display_origin = (0, 0)
         self.drag_start: tuple[int, int] | None = None
@@ -204,133 +206,164 @@ class JobEditor(tk.Tk):
         style.configure("App.TFrame", background=COLOR_BG)
         style.configure("Panel.TFrame", background=COLOR_SURFACE)
         style.configure("Subtle.TFrame", background=COLOR_SURFACE_ALT)
-        style.configure("Title.TLabel", background=COLOR_SURFACE, foreground=COLOR_TEXT, font=("Microsoft YaHei UI", 13, "bold"))
+        style.configure("Title.TLabel", background=COLOR_SURFACE, foreground=COLOR_TEXT, font=("Microsoft YaHei UI", 14, "bold"))
         style.configure("Section.TLabel", background=COLOR_SURFACE, foreground=COLOR_TEXT, font=("Microsoft YaHei UI", 10, "bold"))
         style.configure("Muted.TLabel", background=COLOR_SURFACE, foreground=COLOR_MUTED)
         style.configure("Subtle.TLabel", background=COLOR_SURFACE_ALT, foreground=COLOR_MUTED)
         style.configure("Status.TLabel", background=COLOR_SURFACE_ALT, foreground=COLOR_MUTED)
-        style.configure("TButton", padding=(9, 6), background=COLOR_SURFACE_ALT, foreground=COLOR_TEXT, bordercolor=COLOR_BORDER)
-        style.map("TButton", background=[("active", "#E8EDF2"), ("disabled", "#F2F4F7")], foreground=[("disabled", "#98A2B3")])
-        style.configure("Primary.TButton", padding=(11, 7), background=COLOR_PRIMARY, foreground="#FFFFFF", bordercolor=COLOR_PRIMARY, font=("Microsoft YaHei UI", 9, "bold"))
+        style.configure("StatusValue.TLabel", background=COLOR_SURFACE, foreground=COLOR_TEXT, font=("Microsoft YaHei UI", 10, "bold"))
+        style.configure("TButton", padding=(10, 6), background="#E9E9ED", foreground=COLOR_TEXT, bordercolor=COLOR_BORDER, relief=tk.FLAT)
+        style.map("TButton", background=[("active", "#DEDEE3"), ("pressed", "#D7D7DC"), ("disabled", "#F2F2F4")], foreground=[("disabled", "#A1A1A6")])
+        style.configure("Toolbar.TButton", padding=(8, 5), background=COLOR_SURFACE_ALT, foreground=COLOR_TEXT, bordercolor=COLOR_BORDER)
+        style.configure("Primary.TButton", padding=(12, 7), background=COLOR_PRIMARY, foreground="#FFFFFF", bordercolor=COLOR_PRIMARY, font=("Microsoft YaHei UI", 9, "bold"))
         style.map(
             "Primary.TButton",
-            background=[("active", COLOR_PRIMARY_HOVER), ("pressed", COLOR_PRIMARY_HOVER), ("disabled", "#E4E7EC")],
-            foreground=[("disabled", "#98A2B3")],
+            background=[("active", COLOR_PRIMARY_HOVER), ("pressed", "#0057B8"), ("disabled", "#D9D9DE")],
+            foreground=[("disabled", "#8E8E93")],
         )
-        style.configure("Danger.TButton", background="#FEF3F2", foreground=COLOR_DANGER, bordercolor="#FECDCA")
-        style.map("Danger.TButton", background=[("active", "#FEE4E2")])
+        style.configure("Danger.TButton", background="#FFF0F1", foreground=COLOR_DANGER, bordercolor="#FFD1D6")
+        style.map("Danger.TButton", background=[("active", "#FFE4E7")])
         style.configure("Tool.TRadiobutton", background=COLOR_SURFACE_ALT, foreground=COLOR_TEXT, padding=(6, 4))
-        style.map("Tool.TRadiobutton", background=[("active", "#E8EDF2")], foreground=[("selected", COLOR_PRIMARY)])
-        style.configure("Treeview", rowheight=27, background=COLOR_SURFACE, fieldbackground=COLOR_SURFACE, bordercolor=COLOR_BORDER)
-        style.configure("Treeview.Heading", padding=(6, 7), background=COLOR_SURFACE_ALT, foreground=COLOR_TEXT, font=("Microsoft YaHei UI", 9, "bold"))
-        style.map("Treeview", background=[("selected", COLOR_PRIMARY)], foreground=[("selected", "#FFFFFF")])
+        style.map("Tool.TRadiobutton", background=[("active", "#E5E5EA")], foreground=[("selected", COLOR_PRIMARY)])
+        style.configure("Treeview", rowheight=30, background=COLOR_SURFACE, fieldbackground=COLOR_SURFACE, bordercolor=COLOR_BORDER, relief=tk.FLAT)
+        style.configure("Treeview.Heading", padding=(8, 8), background=COLOR_SURFACE_ALT, foreground=COLOR_MUTED, font=("Microsoft YaHei UI", 9, "bold"), relief=tk.FLAT)
+        style.map("Treeview", background=[("selected", "#DCEBFF")], foreground=[("selected", "#004A9F")])
         style.configure("TNotebook", background=COLOR_SURFACE, borderwidth=0)
-        style.configure("TNotebook.Tab", padding=(13, 8), background=COLOR_SURFACE_ALT)
+        style.configure("TNotebook.Tab", padding=(16, 8), background=COLOR_SURFACE_ALT, borderwidth=0)
         style.map("TNotebook.Tab", background=[("selected", COLOR_SURFACE)], foreground=[("selected", COLOR_PRIMARY)])
         style.configure("TLabelframe", background=COLOR_SURFACE, bordercolor=COLOR_BORDER, relief=tk.SOLID)
         style.configure("TLabelframe.Label", background=COLOR_SURFACE, foreground=COLOR_TEXT, font=("Microsoft YaHei UI", 9, "bold"))
-        style.configure("TEntry", padding=6, fieldbackground=COLOR_SURFACE)
-        style.configure("TCombobox", padding=5, fieldbackground=COLOR_SURFACE)
-
+        style.configure("TEntry", padding=7, fieldbackground=COLOR_SURFACE, bordercolor=COLOR_BORDER, lightcolor=COLOR_BORDER, darkcolor=COLOR_BORDER)
+        style.map("TEntry", bordercolor=[("focus", COLOR_PRIMARY)], lightcolor=[("focus", COLOR_PRIMARY)], darkcolor=[("focus", COLOR_PRIMARY)])
+        style.configure("TCombobox", padding=6, fieldbackground=COLOR_SURFACE, bordercolor=COLOR_BORDER, arrowcolor=COLOR_MUTED)
+        style.map("TCombobox", bordercolor=[("focus", COLOR_PRIMARY)], lightcolor=[("focus", COLOR_PRIMARY)], darkcolor=[("focus", COLOR_PRIMARY)])
+        style.configure("Blue.Horizontal.TProgressbar", troughcolor="#E5E5EA", background=COLOR_PRIMARY, bordercolor="#E5E5EA", lightcolor=COLOR_PRIMARY, darkcolor=COLOR_PRIMARY)
     def _build_ui(self) -> None:
-        header = tk.Frame(self, background=COLOR_HEADER, height=66)
+        header_border = tk.Frame(self, background=COLOR_BORDER, height=59)
+        header_border.pack(fill=tk.X)
+        header_border.pack_propagate(False)
+        header = tk.Frame(header_border, background=COLOR_HEADER, height=58)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
 
         brand = tk.Frame(header, background=COLOR_HEADER)
-        brand.pack(side=tk.LEFT, padx=(18, 22), fill=tk.Y)
-        tk.Label(brand, text="MaaQQLogin", background=COLOR_HEADER, foreground="#FFFFFF", font=("Microsoft YaHei UI", 14, "bold")).pack(anchor=tk.W, pady=(10, 0))
-        tk.Label(brand, text="自动化作业工作台", background=COLOR_HEADER, foreground="#98A2B3", font=("Microsoft YaHei UI", 8)).pack(anchor=tk.W)
+        brand.pack(side=tk.LEFT, padx=(18, 24), fill=tk.Y)
+        tk.Label(brand, text="MaaQQLogin", background=COLOR_HEADER, foreground=COLOR_TEXT, font=("Microsoft YaHei UI", 13, "bold")).pack(anchor=tk.W, pady=(9, 0))
+        tk.Label(brand, text="自动化作业工作台", background=COLOR_HEADER, foreground=COLOR_MUTED, font=("Microsoft YaHei UI", 8)).pack(anchor=tk.W)
 
-        mode_group = tk.Frame(header, background="#1F2937", padx=3, pady=3)
-        mode_group.pack(side=tk.LEFT, pady=10)
+        mode_group = tk.Frame(header, background="#E8E8ED", padx=3, pady=3)
+        mode_group.pack(side=tk.LEFT, pady=11)
         mode_button_options = {
-            "font": ("Microsoft YaHei UI", 10, "bold"),
+            "font": ("Microsoft YaHei UI", 9, "bold"),
             "relief": tk.FLAT,
             "borderwidth": 0,
-            "width": 13,
-            "padx": 8,
-            "pady": 9,
+            "width": 12,
+            "padx": 7,
+            "pady": 6,
             "cursor": "hand2",
-            "highlightthickness": 2,
-            "highlightbackground": "#1F2937",
-            "highlightcolor": "#5EEAD4",
+            "highlightthickness": 1,
+            "highlightbackground": "#E8E8ED",
+            "highlightcolor": COLOR_PRIMARY,
         }
         self.record_mode_button = tk.Button(mode_group, text="步骤录制", command=lambda: self.show_workspace("record"), **mode_button_options)
         self.record_mode_button.pack(side=tk.LEFT)
         self.playback_mode_button = tk.Button(mode_group, text="步骤回放", command=self.open_runner, **mode_button_options)
         self.playback_mode_button.pack(side=tk.LEFT)
-        tk.Label(header, text="ADB · MaaFramework", background=COLOR_HEADER, foreground="#98A2B3", font=("Microsoft YaHei UI", 9)).pack(side=tk.RIGHT, padx=18)
 
-        app_body = ttk.Frame(self, style="App.TFrame", padding=(12, 12, 12, 8))
-        app_body.pack(fill=tk.BOTH, expand=True)
-        self.body = tk.PanedWindow(app_body, orient=tk.HORIZONTAL, background=COLOR_BG, borderwidth=0, sashwidth=8, sashrelief=tk.FLAT, showhandle=False)
-        self.body.pack(fill=tk.BOTH, expand=True)
-
-        preview_frame = ttk.Frame(self.body, style="Panel.TFrame", padding=(14, 12))
-        workspace_frame = ttk.Frame(self.body, style="Panel.TFrame", padding=(0, 0))
-        self.body.add(preview_frame, minsize=570, stretch="always")
-        self.body.add(workspace_frame, minsize=470, stretch="always")
-
-        preview_frame.columnconfigure(0, weight=1)
-        preview_frame.rowconfigure(2, weight=1)
-        preview_header = ttk.Frame(preview_frame, style="Panel.TFrame")
-        preview_header.grid(row=0, column=0, sticky=tk.EW, pady=(0, 10))
-        ttk.Label(preview_header, text="设备预览", style="Title.TLabel").pack(side=tk.LEFT)
-        device_controls = ttk.Frame(preview_header, style="Panel.TFrame")
-        device_controls.pack(side=tk.RIGHT)
-        ttk.Label(device_controls, text="ADB 设备", style="Muted.TLabel").pack(side=tk.LEFT, padx=(0, 6))
-        self.device_combo = ttk.Combobox(device_controls, textvariable=self.device_var, width=20, state="readonly")
+        device_controls = tk.Frame(header, background=COLOR_HEADER)
+        device_controls.pack(side=tk.RIGHT, padx=16, pady=10)
+        tk.Label(device_controls, text="ADB 设备", background=COLOR_HEADER, foreground=COLOR_MUTED, font=("Microsoft YaHei UI", 9)).pack(side=tk.LEFT, padx=(0, 7))
+        self.device_combo = ttk.Combobox(device_controls, textvariable=self.device_var, width=22, state="readonly")
         self.device_combo.pack(side=tk.LEFT)
-        ttk.Button(device_controls, text="刷新", command=self.refresh_devices, width=7).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(device_controls, text="刷新", command=self.refresh_devices, style="Toolbar.TButton", width=7).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(device_controls, text="截图", command=self.capture_screen, style="Primary.TButton", width=8).pack(side=tk.LEFT, padx=(6, 0))
 
-        self.annotation_bar = ttk.Frame(preview_frame, style="Subtle.TFrame", padding=(8, 5))
-        self.annotation_bar.grid(row=1, column=0, sticky=tk.EW, pady=(0, 10))
-        ttk.Label(self.annotation_bar, text="录制工具", style="Subtle.TLabel").pack(side=tk.LEFT, padx=(2, 8))
-        for label, value in (("框选模板", "template"), ("点击位置", "point"), ("滑动轨迹", "swipe")):
-            ttk.Radiobutton(self.annotation_bar, text=label, value=value, variable=self.mode_var, style="Tool.TRadiobutton").pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(self.annotation_bar, text="清除标记", command=self.clear_selection, width=9).pack(side=tk.RIGHT)
+        app_body = ttk.Frame(self, style="App.TFrame", padding=(0, 0, 0, 0))
+        app_body.pack(fill=tk.BOTH, expand=True)
+        self.body = tk.PanedWindow(app_body, orient=tk.HORIZONTAL, background=COLOR_BORDER, borderwidth=0, sashwidth=1, sashrelief=tk.FLAT, showhandle=False)
+        self.body.pack(fill=tk.BOTH, expand=True)
 
-        canvas_border = tk.Frame(preview_frame, background=COLOR_BORDER, padx=1, pady=1)
-        canvas_border.grid(row=2, column=0, sticky=tk.NSEW)
-        self.canvas = tk.Canvas(canvas_border, background=COLOR_CANVAS, highlightthickness=0, cursor="crosshair")
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+        preview_frame = ttk.Frame(self.body, style="Panel.TFrame", padding=(16, 14))
+        workspace_frame = ttk.Frame(self.body, style="Panel.TFrame", padding=(0, 0))
+        self.body.add(preview_frame, minsize=360, stretch="always")
+        self.body.add(workspace_frame, minsize=900, stretch="always")
+
+        preview_frame.columnconfigure(0, weight=1)
+        preview_frame.rowconfigure(1, weight=1)
+        preview_header = ttk.Frame(preview_frame, style="Panel.TFrame")
+        preview_header.grid(row=0, column=0, sticky=tk.EW, pady=(0, 10))
+        ttk.Label(preview_header, text="设备预览", style="Section.TLabel").pack(side=tk.LEFT)
+        ttk.Label(preview_header, text="原始设备画面", style="Muted.TLabel").pack(side=tk.RIGHT)
+
+        device_canvas_border = tk.Frame(preview_frame, background=COLOR_SURFACE_ALT, padx=1, pady=1)
+        device_canvas_border.grid(row=1, column=0, sticky=tk.NSEW)
+        self.device_canvas = tk.Canvas(device_canvas_border, background="#F8F8FA", highlightthickness=0)
+        self.device_canvas.pack(fill=tk.BOTH, expand=True)
 
         preview_footer = ttk.Frame(preview_frame, style="Panel.TFrame")
-        preview_footer.grid(row=3, column=0, sticky=tk.EW, pady=(9, 0))
-        ttk.Label(preview_footer, text="截图按短边 720 归一化", style="Muted.TLabel").pack(side=tk.LEFT)
-        ttk.Label(preview_footer, text="模板 · 坐标 · 滑动", style="Muted.TLabel").pack(side=tk.RIGHT)
+        preview_footer.grid(row=2, column=0, sticky=tk.EW, pady=(9, 0))
+        ttk.Label(preview_footer, text="ADB 实时预览", style="Muted.TLabel").pack(side=tk.LEFT)
+        ttk.Label(preview_footer, text="短边 720", style="Muted.TLabel").pack(side=tk.RIGHT)
 
         workspace_frame.columnconfigure(0, weight=1)
         workspace_frame.rowconfigure(0, weight=1)
-        self.record_panel = ttk.Frame(workspace_frame, style="Panel.TFrame", padding=(14, 12))
+        self.record_panel = ttk.Frame(workspace_frame, style="Panel.TFrame", padding=(0, 0))
         self.record_panel.grid(row=0, column=0, sticky=tk.NSEW)
 
-        record_header = ttk.Frame(self.record_panel, style="Panel.TFrame")
-        record_header.pack(fill=tk.X, pady=(0, 10))
+        record_header = ttk.Frame(self.record_panel, style="Panel.TFrame", padding=(14, 10))
+        record_header.pack(fill=tk.X)
         title_group = ttk.Frame(record_header, style="Panel.TFrame")
-        title_group.pack(fill=tk.X)
-        ttk.Label(title_group, text="步骤录制", style="Title.TLabel").pack(anchor=tk.W)
+        title_group.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Label(title_group, text="步骤编排", style="Title.TLabel").pack(anchor=tk.W)
         ttk.Label(title_group, text="从设备画面创建可复用自动化步骤", style="Muted.TLabel").pack(anchor=tk.W, pady=(2, 0))
         record_actions = ttk.Frame(record_header, style="Panel.TFrame")
-        record_actions.pack(fill=tk.X, pady=(10, 0))
-        ttk.Button(record_actions, text="新建", command=self.new_job, width=7).pack(side=tk.LEFT)
-        ttk.Button(record_actions, text="另存为", command=lambda: self.save_job(save_as=True), width=8).pack(side=tk.LEFT, padx=(5, 0))
-        ttk.Button(record_actions, text="导出", command=self.export_pipeline, width=7).pack(side=tk.LEFT, padx=(5, 0))
+        record_actions.pack(side=tk.RIGHT, padx=(12, 0))
+        ttk.Button(record_actions, text="新建", command=self.new_job, style="Toolbar.TButton", width=7).pack(side=tk.LEFT)
+        ttk.Button(record_actions, text="另存为", command=lambda: self.save_job(save_as=True), style="Toolbar.TButton", width=8).pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Button(record_actions, text="导出", command=self.export_pipeline, style="Toolbar.TButton", width=7).pack(side=tk.LEFT, padx=(5, 0))
         ttk.Button(record_actions, text="保存", command=self.save_job, style="Primary.TButton", width=8).pack(side=tk.LEFT, padx=(5, 0))
 
-        job_bar = ttk.Frame(self.record_panel, style="Subtle.TFrame", padding=(10, 8))
-        job_bar.pack(fill=tk.X, pady=(0, 10))
+        job_bar = ttk.Frame(self.record_panel, style="Subtle.TFrame", padding=(12, 8))
+        job_bar.pack(fill=tk.X)
         ttk.Label(job_bar, text="当前作业", style="Subtle.TLabel").pack(side=tk.LEFT, padx=(0, 8))
         ttk.Entry(job_bar, textvariable=self.job_name_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        notebook = ttk.Notebook(self.record_panel)
-        notebook.pack(fill=tk.BOTH, expand=True)
-        steps_page = ttk.Frame(notebook, style="Panel.TFrame", padding=10)
-        library_page = ttk.Frame(notebook, style="Panel.TFrame", padding=10)
-        notebook.add(steps_page, text="步骤编排")
+        self.record_workbench = tk.PanedWindow(self.record_panel, orient=tk.HORIZONTAL, background=COLOR_BORDER, borderwidth=0, sashwidth=1, sashrelief=tk.FLAT, showhandle=False)
+        self.record_workbench.pack(fill=tk.BOTH, expand=True)
+        viewport_panel = ttk.Frame(self.record_workbench, style="Panel.TFrame", padding=(0, 0))
+        inspector_panel = ttk.Frame(self.record_workbench, style="Panel.TFrame", padding=(0, 0))
+        self.record_workbench.add(viewport_panel, minsize=430, stretch="always")
+        self.record_workbench.add(inspector_panel, minsize=430, stretch="always")
+
+        viewport_panel.columnconfigure(0, weight=1)
+        viewport_panel.rowconfigure(1, weight=1)
+        self.annotation_bar = ttk.Frame(viewport_panel, style="Subtle.TFrame", padding=(10, 7))
+        self.annotation_bar.grid(row=0, column=0, sticky=tk.EW)
+        ttk.Label(self.annotation_bar, text="视口 · Maa 720", style="Subtle.TLabel").pack(side=tk.LEFT, padx=(0, 10))
+        for label, value in (("框选模板", "template"), ("点击位置", "point"), ("滑动轨迹", "swipe")):
+            ttk.Radiobutton(self.annotation_bar, text=label, value=value, variable=self.mode_var, style="Tool.TRadiobutton").pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(self.annotation_bar, text="清除标记", command=self.clear_selection, style="Danger.TButton", width=9).pack(side=tk.RIGHT)
+
+        canvas_border = tk.Frame(viewport_panel, background=COLOR_BORDER, padx=1, pady=1)
+        canvas_border.grid(row=1, column=0, sticky=tk.NSEW)
+        self.canvas = tk.Canvas(canvas_border, background="#FBFBFD", highlightthickness=0, cursor="crosshair")
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+
+        viewport_footer = ttk.Frame(viewport_panel, style="Subtle.TFrame", padding=(10, 7))
+        viewport_footer.grid(row=2, column=0, sticky=tk.EW)
+        ttk.Label(viewport_footer, text="识别区域", style="Subtle.TLabel").pack(side=tk.LEFT)
+        ttk.Label(viewport_footer, textvariable=self.roi_var, style="Subtle.TLabel").pack(side=tk.LEFT, padx=(6, 14))
+        ttk.Label(viewport_footer, text="动作坐标", style="Subtle.TLabel").pack(side=tk.LEFT)
+        ttk.Label(viewport_footer, textvariable=self.target_var, style="Subtle.TLabel").pack(side=tk.LEFT, padx=(6, 0))
+
+        notebook = ttk.Notebook(inspector_panel)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=(1, 0))
+        steps_page = ttk.Frame(notebook, style="Panel.TFrame", padding=12)
+        library_page = ttk.Frame(notebook, style="Panel.TFrame", padding=12)
+        notebook.add(steps_page, text="步骤属性")
         notebook.add(library_page, text="作业库")
+        self.record_notebook = notebook
+        self.steps_page = steps_page
         self._build_steps_page(steps_page)
         self._build_library_page(library_page)
 
@@ -340,27 +373,34 @@ class JobEditor(tk.Tk):
             workspace_frame,
             device_var=self.device_var,
             on_record_requested=lambda: self.show_workspace("record"),
+            on_edit_requested=self.load_job_for_editing,
         )
         self.playback_panel.grid(row=0, column=0, sticky=tk.NSEW)
 
-        status = ttk.Frame(self, style="Subtle.TFrame", padding=(14, 7))
+        status = ttk.Frame(self, style="Subtle.TFrame", padding=(14, 6))
         status.pack(fill=tk.X)
+        ttk.Label(status, text="●  ADB", foreground="#248A3D", style="Status.TLabel").pack(side=tk.LEFT, padx=(0, 10))
         ttk.Label(status, textvariable=self.status_var, style="Status.TLabel").pack(side=tk.LEFT)
-        ttk.Label(status, text="Maa 坐标：短边 720", style="Status.TLabel").pack(side=tk.RIGHT)
+        ttk.Label(status, text="系统日志 · 空闲", style="Status.TLabel").pack(side=tk.RIGHT)
+        ttk.Label(status, text="Maa 坐标：短边 720", style="Status.TLabel").pack(side=tk.RIGHT, padx=(0, 18))
 
-        def place_sash() -> None:
+        def place_sashes() -> None:
             width = self.body.winfo_width()
             if width > 1:
-                target = min(round(width * 0.58), width - 478)
-                self.body.sash_place(0, max(570, target), 0)
+                main_target = min(round(width * 0.31), width - 906)
+                self.body.sash_place(0, max(360, main_target), 0)
+            record_width = self.record_workbench.winfo_width()
+            if record_width > 1:
+                editor_target = min(round(record_width * 0.56), record_width - 436)
+                self.record_workbench.sash_place(0, max(430, editor_target), 0)
 
-        def schedule_sash(_event: tk.Event | None = None) -> None:
-            self.after_idle(place_sash)
+        def schedule_sashes(_event: tk.Event | None = None) -> None:
+            self.after_idle(place_sashes)
 
-        self.body.bind("<Configure>", schedule_sash, add="+")
-        self.after_idle(place_sash)
+        self.body.bind("<Configure>", schedule_sashes, add="+")
+        self.record_workbench.bind("<Configure>", schedule_sashes, add="+")
+        self.after_idle(place_sashes)
         self.show_workspace("record", force=True)
-
     def show_workspace(self, mode: str, force: bool = False) -> None:
         if mode not in {"record", "playback"}:
             raise ValueError(f"未知工作区模式: {mode}")
@@ -391,21 +431,32 @@ class JobEditor(tk.Tk):
         ):
             if mode == active_mode:
                 button.configure(
-                    background=COLOR_PRIMARY,
-                    foreground="#FFFFFF",
-                    activebackground=COLOR_PRIMARY_HOVER,
-                    activeforeground="#FFFFFF",
+                    background="#FFFFFF",
+                    foreground=COLOR_TEXT,
+                    activebackground="#FFFFFF",
+                    activeforeground=COLOR_TEXT,
                 )
             else:
                 button.configure(
-                    background="#1F2937",
-                    foreground="#CBD5E1",
-                    activebackground="#374151",
-                    activeforeground="#FFFFFF",
+                    background="#E8E8ED",
+                    foreground=COLOR_MUTED,
+                    activebackground="#DEDEE3",
+                    activeforeground=COLOR_TEXT,
                 )
-
     def _build_steps_page(self, parent: ttk.Frame) -> None:
-        tree_frame = ttk.Frame(parent)
+        workspace = tk.PanedWindow(parent, orient=tk.HORIZONTAL, background=COLOR_BORDER, borderwidth=0, sashwidth=5, sashrelief=tk.FLAT)
+        workspace.pack(fill=tk.BOTH, expand=True)
+        list_panel = ttk.Frame(workspace, style="Panel.TFrame", padding=(0, 0, 10, 0))
+        property_panel = ttk.Frame(workspace, style="Panel.TFrame", padding=(10, 0, 0, 0))
+        workspace.add(list_panel, minsize=310, stretch="always")
+        workspace.add(property_panel, minsize=390, stretch="always")
+
+        list_header = ttk.Frame(list_panel, style="Panel.TFrame")
+        list_header.pack(fill=tk.X, pady=(0, 7))
+        ttk.Label(list_header, text="步骤列表", style="Section.TLabel").pack(side=tk.LEFT)
+        ttk.Label(list_header, text="按执行顺序排列", style="Muted.TLabel").pack(side=tk.RIGHT)
+
+        tree_frame = ttk.Frame(list_panel)
         tree_frame.pack(fill=tk.BOTH, expand=True)
         columns = ("index", "name", "recognition", "action")
         self.steps_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=8, selectmode="browse")
@@ -418,27 +469,32 @@ class JobEditor(tk.Tk):
         self.steps_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        buttons = ttk.Frame(parent)
+        buttons = ttk.Frame(list_panel)
         buttons.pack(fill=tk.X, pady=(7, 3))
-        ttk.Button(buttons, text="添加到末尾", command=self.add_step).pack(side=tk.LEFT)
-        ttk.Button(buttons, text="准备新步骤", command=self.prepare_append_step).pack(side=tk.LEFT, padx=5)
-        ttk.Button(buttons, text="保存选中修改", command=self.update_step).pack(side=tk.LEFT)
-        ttk.Button(buttons, text="删除", command=self.delete_step).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons, text="添加", command=self.add_step, style="Primary.TButton").pack(side=tk.LEFT)
+        ttk.Button(buttons, text="新步骤", command=self.prepare_append_step).pack(side=tk.LEFT, padx=5)
+        ttk.Button(buttons, text="更新", command=self.update_step).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="删除", command=self.delete_step, style="Danger.TButton").pack(side=tk.LEFT, padx=5)
         ttk.Button(buttons, text="下移", command=lambda: self.move_step(1), width=6).pack(side=tk.RIGHT)
         ttk.Button(buttons, text="上移", command=lambda: self.move_step(-1), width=6).pack(side=tk.RIGHT, padx=5)
 
-        quick = ttk.Frame(parent)
-        quick.pack(fill=tk.X, pady=(0, 7))
-        ttk.Label(quick, text="快速添加").pack(side=tk.LEFT)
-        ttk.Button(quick, text="输入文本", command=self.add_input_step).pack(side=tk.LEFT, padx=(8, 4))
-        ttk.Button(quick, text="等待延迟", command=self.add_wait_step).pack(side=tk.LEFT)
+        quick = ttk.Frame(list_panel, style="Subtle.TFrame", padding=(8, 6))
+        quick.pack(fill=tk.X, pady=(3, 0))
+        ttk.Label(quick, text="快速添加", style="Subtle.TLabel").pack(side=tk.LEFT)
+        ttk.Button(quick, text="输入文本", command=self.add_input_step, style="Toolbar.TButton").pack(side=tk.LEFT, padx=(8, 4))
+        ttk.Button(quick, text="等待延迟", command=self.add_wait_step, style="Toolbar.TButton").pack(side=tk.LEFT)
 
-        properties = ttk.LabelFrame(parent, text="步骤属性", padding=10)
-        properties.pack(fill=tk.X)
-        self._field(properties, 0, "名称", ttk.Entry(properties, textvariable=self.step_name_var))
+        property_header = ttk.Frame(property_panel, style="Panel.TFrame")
+        property_header.pack(fill=tk.X, pady=(0, 7))
+        ttk.Label(property_header, text="步骤属性", style="Section.TLabel").pack(side=tk.LEFT)
+        ttk.Label(property_header, text="识别与动作参数", style="Muted.TLabel").pack(side=tk.RIGHT)
+
+        properties = ttk.LabelFrame(property_panel, text="基础设置", padding=12)
+        properties.pack(fill=tk.BOTH, expand=True)
+        self._field(properties, 0, "名称", ttk.Entry(properties, textvariable=self.step_name_var), 0)
         self._field(
             properties,
-            1,
+            0,
             "识别",
             ttk.Combobox(
                 properties,
@@ -446,10 +502,11 @@ class JobEditor(tk.Tk):
                 values=tuple(RECOGNITION_LABELS),
                 state="readonly",
             ),
+            1,
         )
         self._field(
             properties,
-            2,
+            1,
             "动作",
             ttk.Combobox(
                 properties,
@@ -457,26 +514,29 @@ class JobEditor(tk.Tk):
                 values=tuple(ACTION_LABELS),
                 state="readonly",
             ),
+            0,
         )
-        self._field(properties, 3, "输入内容", ttk.Entry(properties, textvariable=self.input_var))
-        self._field(properties, 4, "OCR 文字", ttk.Entry(properties, textvariable=self.expected_var))
-        self._field(properties, 5, "匹配阈值", ttk.Entry(properties, textvariable=self.threshold_var))
-        self._field(properties, 6, "按键码", ttk.Entry(properties, textvariable=self.key_var))
-        self._field(properties, 7, "滑动时长 ms", ttk.Entry(properties, textvariable=self.duration_var))
-        self._field(properties, 8, "执行前延迟 ms", ttk.Entry(properties, textvariable=self.pre_delay_var))
-        self._field(properties, 9, "执行后延迟 ms", ttk.Entry(properties, textvariable=self.delay_var))
-        self._field(properties, 10, "识别区域", ttk.Label(properties, textvariable=self.roi_var))
-        self._field(properties, 11, "动作坐标", ttk.Label(properties, textvariable=self.target_var))
+        self._field(properties, 1, "输入内容", ttk.Entry(properties, textvariable=self.input_var), 1)
+        self._field(properties, 2, "OCR 文字", ttk.Entry(properties, textvariable=self.expected_var), 0)
+        self._field(properties, 2, "匹配阈值", ttk.Entry(properties, textvariable=self.threshold_var), 1)
+        self._field(properties, 3, "按键码", ttk.Entry(properties, textvariable=self.key_var), 0)
+        self._field(properties, 3, "滑动时长 ms", ttk.Entry(properties, textvariable=self.duration_var), 1)
+        self._field(properties, 4, "执行前延迟 ms", ttk.Entry(properties, textvariable=self.pre_delay_var), 0)
+        self._field(properties, 4, "执行后延迟 ms", ttk.Entry(properties, textvariable=self.delay_var), 1)
+        self._field(properties, 5, "识别区域", ttk.Label(properties, textvariable=self.roi_var, wraplength=190), 0)
+        self._field(properties, 5, "动作坐标", ttk.Label(properties, textvariable=self.target_var, wraplength=190), 1)
         properties.columnconfigure(1, weight=1)
+        properties.columnconfigure(3, weight=1)
 
-        actions = ttk.Frame(parent)
+        actions = ttk.Frame(property_panel)
         actions.pack(fill=tk.X, pady=(8, 0))
-        ttk.Button(actions, text="在设备上预览此动作", command=self.preview_step).pack(fill=tk.X)
-    @staticmethod
-    def _field(parent: ttk.LabelFrame, row: int, label: str, widget: tk.Widget) -> None:
-        ttk.Label(parent, text=label, width=13).grid(row=row, column=0, sticky=tk.W, pady=3)
-        widget.grid(row=row, column=1, sticky=tk.EW, pady=3)
+        ttk.Button(actions, text="在设备上预览此动作", command=self.preview_step, style="Primary.TButton").pack(fill=tk.X)
 
+    @staticmethod
+    def _field(parent: ttk.LabelFrame, row: int, label: str, widget: tk.Widget, column: int = 0) -> None:
+        base_column = column * 2
+        ttk.Label(parent, text=label, width=11).grid(row=row, column=base_column, sticky=tk.W, padx=(0, 6), pady=6)
+        widget.grid(row=row, column=base_column + 1, sticky=tk.EW, padx=(0, 12) if column == 0 else (0, 0), pady=6)
     def _build_library_page(self, parent: ttk.Frame) -> None:
         category_row = ttk.Frame(parent)
         category_row.pack(fill=tk.X, pady=(0, 8))
@@ -677,6 +737,7 @@ class JobEditor(tk.Tk):
         self.render_canvas()
 
     def clear_selection(self) -> None:
+        self.drag_start = None
         self.selection_roi = None
         self.selection_target = None
         self.selection_swipe_end = None
@@ -875,7 +936,10 @@ class JobEditor(tk.Tk):
         self.recognition_var.set(RECOGNITION_NAMES["TemplateMatch"])
         self.action_var.set(ACTION_NAMES["Click"])
         self.expected_var.set("")
+        self.threshold_var.set("0.80")
         self.input_var.set("")
+        self.key_var.set("4")
+        self.duration_var.set("300")
         self.pre_delay_var.set("0")
         self.delay_var.set("500")
         self.clear_selection()
@@ -944,11 +1008,14 @@ class JobEditor(tk.Tk):
         self.current_path = path
         self.dirty = False
         self.refresh_jobs()
-        self.status_var.set(f"已保存：{path.relative_to(JOBS_DIR) if path.is_relative_to(JOBS_DIR) else path}")
+        self.refresh_steps()
+        self._prepare_next_step()
+        self.record_notebook.select(self.steps_page)
+        display_path = path.relative_to(JOBS_DIR) if path.is_relative_to(JOBS_DIR) else path
+        self.status_var.set(f"保存成功：{display_path}")
+        messagebox.showinfo("保存成功", f"作业已保存：\n{display_path}", parent=self)
         return True
-    def open_job(self, path: Path | None = None) -> None:
-        if not self.confirm_discard():
-            return
+    def open_job(self, path: Path | None = None) -> bool:
         if path is None:
             path_text = filedialog.askopenfilename(
                 parent=self,
@@ -957,13 +1024,22 @@ class JobEditor(tk.Tk):
                 filetypes=(("Maa 作业", "*.maa_job.json"), ("JSON", "*.json")),
             )
             if not path_text:
-                return
+                return False
             path = Path(path_text)
+        return self.load_job_for_editing(path)
+
+    def load_job_for_editing(self, path: Path) -> bool:
+        """Load a job by path and switch to the recording workspace for editing."""
+        if not self.confirm_discard():
+            return False
+        if self.workspace_var.get() == "playback" and not self.playback_panel.prepare_leave():
+            return False
+        path = Path(path)
         try:
             self.document = JobDocument.load(path)
         except Exception as error:
             messagebox.showerror("载入失败", str(error), parent=self)
-            return
+            return False
         self.current_path = path
         self.job_name_var.set(self.document.name)
         self.category_var.set(self.document.category)
@@ -971,7 +1047,10 @@ class JobEditor(tk.Tk):
         self.refresh_steps()
         self.refresh_prerequisites()
         self._prepare_next_step()
+        self.record_notebook.select(self.steps_page)
+        self.show_workspace("record", force=True)
         self.status_var.set(f"已载入，可继续追加：{self.document.category} / {path.name}")
+        return True
     def refresh_jobs(self) -> None:
         JOBS_DIR.mkdir(parents=True, exist_ok=True)
         self.jobs_tree.delete(*self.jobs_tree.get_children())
@@ -991,9 +1070,18 @@ class JobEditor(tk.Tk):
                 continue
             grouped.setdefault(category, []).append((display_name, path))
 
+        library_categories = [item.name for item in JobLibrary(JOBS_DIR).list_categories()]
+        for category in library_categories:
+            if not query or query in category.casefold():
+                grouped.setdefault(category, [])
+
         preferred = {name: index for index, name in enumerate(SMART_CATEGORIES)}
         categories = sorted(grouped, key=lambda name: (preferred.get(name, 999), name))
-        choices = ["智能推荐", *SMART_CATEGORIES, *(name for name in categories if name not in SMART_CATEGORIES)]
+        choices = [
+            "智能推荐",
+            *SMART_CATEGORIES,
+            *(name for name in library_categories if name not in SMART_CATEGORIES),
+        ]
         self.category_combo["values"] = tuple(dict.fromkeys(choices))
         for category_index, category in enumerate(categories):
             items = sorted(grouped[category], key=lambda item: item[0])
@@ -1012,7 +1100,7 @@ class JobEditor(tk.Tk):
     def load_library_job(self) -> None:
         path = self.selected_library_path()
         if path:
-            self.open_job(path)
+            self.load_job_for_editing(path)
 
     def add_prerequisite(self) -> None:
         path = self.selected_library_path()
