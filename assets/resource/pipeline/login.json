@@ -29,12 +29,7 @@
     // ----------------------------------------------------------
     "打开QQ": {
         "action": "StartApp",
-        "params": {
-            // 根据你电脑上 QQ 的实际安装路径修改
-            "exec": "C:\\Program Files\\Tencent\\QQNT\\QQ.exe",
-            // 如果已经运行也可以改成通过包名启动
-            "package": "com.tencent.qq"
-        },
+        "package": "com.tencent.mobileqq",
         "next": [
             "等待窗口出现",
             "检测登录窗口"
@@ -124,10 +119,8 @@
 
     "输入账号": {
         "action": "InputText",
-        "params": {
-            // 这里填入你的 QQ 号，或者通过 option 传入
-            "text": "你的QQ号"
-        },
+        // 默认占位值可由 ProjectInterface 的 QQ账号 option 覆盖
+        "input_text": "你的QQ号",
         "next": [
             "点击密码输入框"
         ]
@@ -140,10 +133,8 @@
     // 请取消下面"点击密码输入框"的注释。
     // ----------------------------------------------------------
     "点击密码输入框": {
-        "action": "Key",
-        "params": {
-            "keys": ["Tab"]
-        },
+        "action": "ClickKey",
+        "key": 61,
         "next": [
             "输入密码"
         ]
@@ -151,10 +142,8 @@
 
     "输入密码": {
         "action": "InputText",
-        "params": {
-            // 这里填入你的 QQ 密码，或者通过 option 传入
-            "text": "你的QQ密码"
-        },
+        // 默认占位值可由 ProjectInterface 的 QQ密码 option 覆盖
+        "input_text": "你的QQ密码",
         "next": [
             "勾选记住密码",
             "点击登录按钮"

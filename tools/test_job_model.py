@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from job_model import JobDocument, JobStep, safe_name, suggest_category, suggest_category
+from job_model import JobDocument, JobStep, safe_name, suggest_category
 
 
 class JobModelTests(unittest.TestCase):

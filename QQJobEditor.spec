@@ -17,7 +17,7 @@ a = Analysis(
         (str(agent_binary_dir), 'MaaAgentBinary'),
         *maa_datas,
     ],
-    hiddenimports=[*maa_hiddenimports, 'job_runner', 'job_model', 'job_library'],
+    hiddenimports=[*maa_hiddenimports, 'job_runner', 'job_model', 'job_library', 'semantic_navigator'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

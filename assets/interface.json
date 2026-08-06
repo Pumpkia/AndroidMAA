@@ -1,52 +1,90 @@
 {
-    "interface_version": 2,
-    "name": "MaaQQLogin",
-    "description": "QQ 自动登录 - 基于 MaaFramework",
-    "contact": "",
-    "license": "MIT",
-    "version": "2.1.0",
-    "controller": [
-        {
-            "name": "安卓端",
-            "type": "Adb",
-            "display_short_side": 720,
-            "display_raw": false
-        }
-    ],
-    "resource": [
-        {
-            "name": "默认",
-            "path": [
-                "./resource"
-            ]
-        }
-    ],
-    "task": [
-        {
-            "name": "QQ登录",
-            "entry": "QQLogin"
-        },
-        {
-            "name": "切换账号登录",
-            "entry": "SwitchToPasswordLogin"
-        },
-        {
-            "name": "仅输入账号密码",
-            "entry": "EnterCredentials"
-        },
-        {
-            "name": "仅点击登录",
-            "entry": "ClickLogin"
-        }
-    ],
-    "option": {
-        "QQ账号": {
-            "type": "input",
-            "default": ""
-        },
-        "QQ密码": {
-            "type": "input",
-            "default": ""
-        }
-    }
+    "interface_version":  2,
+    "name":  "MaaQQLogin",
+    "description":  "QQ 自动登录 - 基于 MaaFramework",
+    "contact":  "",
+    "license":  "MIT",
+    "version":  "2.1.0",
+    "controller":  [
+                       {
+                           "name":  "安卓端",
+                           "type":  "Adb",
+                           "display_short_side":  720,
+                           "display_raw":  false
+                       }
+                   ],
+    "resource":  [
+                     {
+                         "name":  "默认",
+                         "path":  [
+                                      "./resource"
+                                  ]
+                     }
+                 ],
+    "task":  [
+                 {
+                     "name":  "QQ登录",
+                     "entry":  "QQLogin",
+                     "option":  [
+                                    "QQ账号",
+                                    "QQ密码"
+                                ]
+                 },
+                 {
+                     "name":  "切换账号登录",
+                     "entry":  "SwitchToPasswordLogin"
+                 },
+                 {
+                     "name":  "仅输入账号密码",
+                     "entry":  "EnterCredentials",
+                     "option":  [
+                                    "QQ账号",
+                                    "QQ密码"
+                                ]
+                 },
+                 {
+                     "name":  "仅点击登录",
+                     "entry":  "ClickLogin"
+                 }
+             ],
+    "option":  {
+                   "QQ账号":  {
+                                "type":  "input",
+                                "label":  "QQ账号",
+                                "description":  "仅填写测试账号；输入值可能由通用 UI 明文保存。",
+                                "inputs":  [
+                                               {
+                                                   "name":  "账号",
+                                                   "label":  "QQ账号",
+                                                   "default":  "",
+                                                   "pipeline_type":  "string",
+                                                   "verify":  "^\\d+$",
+                                                   "pattern_msg":  "QQ 账号应只包含数字。"
+                                               }
+                                           ],
+                                "pipeline_override":  {
+                                                          "输入账号":  {
+                                                                       "input_text":  "{账号}"
+                                                                   }
+                                                      }
+                            },
+                   "QQ密码":  {
+                                "type":  "input",
+                                "label":  "QQ密码",
+                                "description":  "仅填写测试账号密码；输入值可能由通用 UI 明文保存。",
+                                "inputs":  [
+                                               {
+                                                   "name":  "密码",
+                                                   "label":  "QQ密码",
+                                                   "default":  "",
+                                                   "pipeline_type":  "string"
+                                               }
+                                           ],
+                                "pipeline_override":  {
+                                                          "输入密码":  {
+                                                                       "input_text":  "{密码}"
+                                                                   }
+                                                      }
+                            }
+               }
 }

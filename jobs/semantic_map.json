@@ -1,0 +1,50 @@
+{
+  "format_version": 1,
+  "regions": [
+    {
+      "id": "qq-message",
+      "page": "消息主页",
+      "name": "消息",
+      "aliases": [
+        "消息页"
+      ],
+      "action": "click",
+      "destination": "",
+      "selector": {
+        "resource_id": "com.tencent.mobileqq:id/kbi",
+        "text": "消息",
+        "content_desc": "",
+        "class_name": "android.widget.TextView"
+      },
+      "bounds_ratio": [
+        0.098148,
+        0.92125,
+        0.151852,
+        0.938333
+      ]
+    },
+    {
+      "id": "qq-search",
+      "page": "消息主页",
+      "name": "搜索",
+      "aliases": [
+        "查找",
+        "搜一搜"
+      ],
+      "action": "click",
+      "destination": "搜索页",
+      "selector": {
+        "resource_id": "com.tencent.mobileqq:id/082",
+        "text": "",
+        "content_desc": "搜索",
+        "class_name": "android.view.ViewGroup"
+      },
+      "bounds_ratio": [
+        0.0,
+        0.099583,
+        1.0,
+        0.167083
+      ]
+    }
+  ]
+}

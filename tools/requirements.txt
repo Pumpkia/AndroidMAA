@@ -1,4 +1,5 @@
 MaaFw==5.10.2
+jsonschema==4.26.0
 opencv-python==4.13.0.92
 pyinstaller==6.21.0
 PySide6==6.11.1

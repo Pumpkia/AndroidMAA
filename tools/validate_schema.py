@@ -7,6 +7,13 @@ from pathlib import Path
 from jsonschema import Draft7Validator, Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
+
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+DEFAULT_SCHEMA_DIR = PROJECT_DIR / "deps" / "tools"
+DEFAULT_RESOURCE_DIR = PROJECT_DIR / "assets" / "resource"
+DEFAULT_INTERFACE_FILE = PROJECT_DIR / "assets" / "interface.json"
+
+
 try:
     from referencing import Registry, Resource
     from referencing.jsonschema import DRAFT202012, DRAFT7
@@ -145,7 +152,7 @@ def validate_file(file_path, validator):
         errors = list(validator.iter_errors(data))
 
         if errors:
-            print(f"\n❌ Validation failed for {file_path}:")
+            print(f"\n[FAIL] Validation failed for {file_path}:")
             print(f"   Found {len(errors)} error(s):")
             for idx, error in enumerate(errors[:10], 1):
                 path = "/" + "/".join(str(p) for p in error.path) if error.path else "/"
@@ -163,10 +170,10 @@ def validate_file(file_path, validator):
                     )
             return False
 
-        print(f"✓ {file_path}")
+        print(f"[OK] {file_path}")
         return True
     except Exception as e:
-        print(f"\n❌ Error validating {file_path}: {e}")
+        print(f"\n[ERROR] Error validating {file_path}: {e}")
         # 输出GitHub Actions格式的错误注解
         print(f"::error file={file_path},title=Validation Error::{e}")
         return False
@@ -214,14 +221,14 @@ def main():
     parser.add_argument(
         "--schema-dir",
         type=str,
-        default="tools/schema",
-        help="Directory containing schema files (default: tools/schema)",
+        default=str(DEFAULT_SCHEMA_DIR),
+        help=f"Directory containing schema files (default: {DEFAULT_SCHEMA_DIR})",
     )
     parser.add_argument(
         "--resource-dirs",
         type=str,
         nargs="+",
-        default=["assets/resource"],
+        default=[str(DEFAULT_RESOURCE_DIR)],
         help="Directories containing resource files to validate (default: assets/resource)",
     )
     parser.add_argument(
@@ -235,7 +242,7 @@ def main():
         "--interface-files",
         type=str,
         nargs="+",
-        default=["assets/interface.json"],
+        default=[str(DEFAULT_INTERFACE_FILE)],
         help="Path to interface.json files (default: assets/interface.json)",
     )
     parser.add_argument(
@@ -365,10 +372,10 @@ def main():
             )
 
     if all_valid:
-        print("\n✅ All validations passed!")
+        print("\n[OK] All validations passed!")
         sys.exit(0)
     else:
-        print("\n❌ Some validations failed!")
+        print("\n[FAIL] Some validations failed!")
         sys.exit(1)
 
 

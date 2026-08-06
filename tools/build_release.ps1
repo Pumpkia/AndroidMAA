@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$Version = "v2.1.0",
     [ValidatePattern('^\.packaging(?:-[A-Za-z0-9._-]+)?$')]
     [string]$StagingName = ".packaging-build"
@@ -90,6 +90,11 @@ New-Item -ItemType Directory -Path $workPath, $stagingDistPath, $releasePath -Fo
 
 Push-Location $projectRoot
 try {
+    python tools\validate_schema.py
+    if ($LASTEXITCODE -ne 0) {
+        throw "Schema validation failed."
+    }
+
     python -m unittest discover -s tools -p "test_*.py"
     if ($LASTEXITCODE -ne 0) {
         throw "Unit tests failed."

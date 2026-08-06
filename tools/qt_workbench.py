@@ -6,12 +6,13 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime
 
 import cv2
 import numpy as np
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QThread, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
     QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 from job_model import JobDocument, JobStep, safe_name
 from job_runner import MaaJobRunner
+from semantic_navigator import SemanticNavigatorPage
 
 
 def app_dir():
@@ -34,6 +36,23 @@ ADB_EXE = APP_DIR / "platform-tools" / "adb.exe"
 
 RECOGNITION_OPTIONS = (("\u6a21\u677f\u5339\u914d", "TemplateMatch"), ("\u6587\u5b57\u8bc6\u522b (OCR)", "OCR"), ("\u76f4\u63a5\u547d\u4e2d", "DirectHit"))
 ACTION_OPTIONS = (("\u70b9\u51fb", "Click"), ("\u8f93\u5165\u6587\u672c", "InputText"), ("\u6ed1\u52a8", "Swipe"), ("\u6309\u952e", "ClickKey"), ("\u7b49\u5f85", "DoNothing"))
+
+
+def run_job_with_retry(runner, document, serial, emit, retry, should_stop=None):
+    attempts = 2 if retry else 1
+    for attempt in range(attempts):
+        try:
+            succeeded = runner.run(document, serial, emit)
+        except Exception as error:
+            emit(f"用例异常：{error}")
+            succeeded = False
+        if succeeded:
+            return True
+        if should_stop and should_stop():
+            return False
+        if attempt + 1 < attempts:
+            emit("首次执行失败，正在重试一次")
+    return False
 
 
 def icon(widget, name):
@@ -96,8 +115,13 @@ class AdbClient:
         result = self.run([*self.args(), "shell", *args])
         if result.returncode:
             raise RuntimeError(result.stderr.decode("utf-8", "replace") or "ADB 操作失败")
+        return result.stdout
 
     def execute(self, step):
+        if not self.serial:
+            raise RuntimeError("请先选择已连接的 ADB 设备")
+        if step.pre_delay:
+            time.sleep(step.pre_delay / 1000)
         if step.action == "Click" and step.target:
             self.shell(["input", "tap", *map(str, step.target)])
         elif step.action == "Swipe" and step.target and step.swipe_end:
@@ -106,14 +130,29 @@ class AdbClient:
             self.shell(["input", "text", step.input_text.replace(" ", "%s")])
         elif step.action == "ClickKey":
             self.shell(["input", "keyevent", str(step.key)])
+        elif step.action == "DoNothing":
+            pass
         else:
             raise RuntimeError("当前步骤没有可预览的设备动作")
+        if step.post_delay:
+            time.sleep(step.post_delay / 1000)
 
 
 def to_pixmap(image):
     rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     h, w, channels = rgb.shape
     return QPixmap.fromImage(QImage(rgb.data, w, h, w * channels, QImage.Format.Format_RGB888).copy())
+
+
+def write_png(path, image):
+    succeeded, encoded = cv2.imencode(".png", image)
+    if not succeeded:
+        return False
+    try:
+        encoded.tofile(str(path))
+        return True
+    except OSError:
+        return False
 
 
 class PhonePreview(QWidget):
@@ -249,10 +288,10 @@ class Canvas(QWidget):
             painter.drawLine(point + QPoint(-14, 0), point + QPoint(14, 0))
             painter.drawLine(point + QPoint(0, -14), point + QPoint(0, 14))
         if self.target and self.swipe_end:
-            painter.setPen(QPen(QColor("#0A84FF"), 3))
+            painter.setPen(QPen(QColor("#0067C5"), 3))
             painter.drawLine(self.to_canvas(self.target), self.to_canvas(self.swipe_end))
         if self.start and self.current and self.mode == "swipe":
-            painter.setPen(QPen(QColor("#0A84FF"), 3))
+            painter.setPen(QPen(QColor("#0067C5"), 3))
             painter.drawLine(self.start, self.current)
 
 
@@ -280,6 +319,8 @@ def tool(owner, icon_name, tip, callback):
     button = QToolButton()
     button.setIcon(icon(owner, icon_name))
     button.setToolTip(tip)
+    button.setAccessibleName(tip)
+    button.setFixedSize(36, 36)
     button.clicked.connect(callback)
     return button
 
@@ -476,7 +517,7 @@ class RecordPage(QWidget):
             relative = Path("jobs") / safe_name(self.app.document.name) / f"{safe_name(self.name.text(), 'step')}.png"
             output = ASSETS_DIR / "resource" / "image" / relative
             output.parent.mkdir(parents=True, exist_ok=True)
-            if crop.size and cv2.imwrite(str(output), crop):
+            if crop.size and write_png(output, crop):
                 template = relative.as_posix()
         return JobStep(
             name=self.name.text().strip() or "新步骤",
@@ -489,7 +530,10 @@ class RecordPage(QWidget):
         )
 
     def add_step(self):
-        self.app.document.steps.append(self.make_step())
+        step = self.make_step()
+        if not self.validate_step(step):
+            return
+        self.app.document.steps.append(step)
         self.refresh_steps(len(self.app.document.steps) - 1)
         self.name.setText(f"步骤 {len(self.app.document.steps) + 1}")
         self.app.set_dirty(True)
@@ -499,7 +543,10 @@ class RecordPage(QWidget):
         if row < 0:
             QMessageBox.information(self, "步骤属性", "请先选择需要修改的步骤。")
             return
-        self.app.document.steps[row] = self.make_step(self.app.document.steps[row].template)
+        step = self.make_step(self.app.document.steps[row].template)
+        if not self.validate_step(step):
+            return
+        self.app.document.steps[row] = step
         self.refresh_steps(row)
         self.app.set_dirty(True)
 
@@ -550,9 +597,22 @@ class RecordPage(QWidget):
         self.canvas.update()
 
     def preview_step(self):
+        if not self.app.adb.serial:
+            QMessageBox.warning(self, "ADB 设备", "请先选择已连接的 ADB 设备。")
+            return
         row = self.steps.currentRow()
         step = self.app.document.steps[row] if 0 <= row < len(self.app.document.steps) else self.make_step()
+        if not self.validate_step(step):
+            return
         self.app.run_async(lambda: self.app.adb.execute(step), lambda _value: self.app.toast(f"已在设备上执行：{step.name}"))
+
+    def validate_step(self, step):
+        errors = step.validate()
+        if errors:
+            QMessageBox.warning(self, "步骤无法使用", "\n".join(errors))
+            return False
+        return True
+
 
 class PlaybackPage(QWidget):
     log_signal = Signal(str)
@@ -563,6 +623,7 @@ class PlaybackPage(QWidget):
         self.queue = []
         self.runner = MaaJobRunner(APP_DIR, ASSETS_DIR, JOBS_DIR)
         self.stop_requested = False
+        self.mutable_controls = []
         self.log_signal.connect(self.append_log)
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -584,7 +645,8 @@ class PlaybackPage(QWidget):
         title.setObjectName("sectionTitle")
         header.addWidget(title)
         header.addStretch()
-        header.addWidget(tool(self, "refresh", "刷新用例库", self.refresh_library))
+        refresh = tool(self, "refresh", "刷新用例库", self.refresh_library)
+        header.addWidget(refresh)
         layout.addLayout(header)
         self.search = QLineEdit()
         self.search.setPlaceholderText("搜索用例...")
@@ -610,6 +672,7 @@ class PlaybackPage(QWidget):
         add.setObjectName("primaryButton")
         add.clicked.connect(self.add_selected)
         layout.addWidget(add)
+        self.mutable_controls.extend((refresh, self.search, self.tree, create, edit, delete, add))
         return pane
 
     def build_queue(self):
@@ -624,7 +687,8 @@ class PlaybackPage(QWidget):
         header.addWidget(title)
         header.addStretch()
         self.state = QLabel("就绪")
-        self.state.setObjectName("successPill")
+        self.state.setObjectName("statusPill")
+        self.state.setProperty("runState", "idle")
         header.addWidget(self.state)
         layout.addLayout(header)
         self.progress = QProgressBar()
@@ -651,8 +715,11 @@ class PlaybackPage(QWidget):
         row.addWidget(remove)
         row.addWidget(clear)
         row.addStretch()
-        row.addWidget(tool(self, "up", "队列上移", lambda: self.move_queue(-1)))
-        row.addWidget(tool(self, "down", "队列下移", lambda: self.move_queue(1)))
+        move_up = tool(self, "up", "队列上移", lambda: self.move_queue(-1))
+        move_down = tool(self, "down", "队列下移", lambda: self.move_queue(1))
+        row.addWidget(move_up)
+        row.addWidget(move_down)
+        self.mutable_controls.extend((self.table, remove, clear, move_up, move_down))
         layout.addLayout(row)
         return pane
 
@@ -679,7 +746,7 @@ class PlaybackPage(QWidget):
         layout.addWidget(title)
         self.retry = QCheckBox("失败自动重试")
         self.retry.setChecked(True)
-        self.capture_error = QCheckBox("捕获错误")
+        self.capture_error = QCheckBox("失败时保存设备截图")
         for checkbox in (self.retry, self.capture_error):
             frame = QFrame()
             frame.setObjectName("settingRow")
@@ -701,6 +768,21 @@ class PlaybackPage(QWidget):
         self.log.setObjectName("logView")
         layout.addWidget(self.log, 1)
         return pane
+
+    def set_execution_active(self, active):
+        for control in self.mutable_controls:
+            control.setEnabled(not active)
+        self.retry.setEnabled(not active)
+        self.capture_error.setEnabled(not active)
+        self.start.setEnabled(not active)
+        self.stop.setEnabled(active)
+        self.app.set_execution_active(active)
+
+    def set_state(self, text, state):
+        self.state.setText(text)
+        self.state.setProperty("runState", state)
+        self.state.style().unpolish(self.state)
+        self.state.style().polish(self.state)
 
     def refresh_library(self):
         query = self.search.text().strip().casefold() if hasattr(self, "search") else ""
@@ -776,6 +858,13 @@ class PlaybackPage(QWidget):
         if 0 <= select < len(self.queue):
             self.table.selectRow(select)
 
+    def set_queue_status(self, row, status):
+        item = self.table.item(row, 3)
+        if item is None:
+            item = QTableWidgetItem()
+            self.table.setItem(row, 3, item)
+        item.setText(status)
+
     def remove_selected(self):
         row = self.table.currentRow()
         if row >= 0:
@@ -804,21 +893,35 @@ class PlaybackPage(QWidget):
             QMessageBox.warning(self, "ADB 设备", "请先选择已连接的 ADB 设备。")
             return
         self.stop_requested = False
-        self.start.setEnabled(False)
-        self.stop.setEnabled(True)
-        self.state.setText("执行中")
+        self.set_execution_active(True)
+        self.set_state("执行中", "running")
         self.progress.setValue(1)
         queue, serial = list(self.queue), self.app.adb.serial
+        retry_failed = self.retry.isChecked()
+        capture_failure = self.capture_error.isChecked()
 
         def operation():
             succeeded = 0
             for index, path in enumerate(queue):
                 if self.stop_requested:
                     break
+                self.app.call_ui(lambda row=index: self.set_queue_status(row, "执行中"))
                 self.log_signal.emit(f"开始用例：{path.name}")
-                ok = self.runner.run(JobDocument.load(path), serial, self.log_signal.emit)
+                document = JobDocument.load(path)
+                ok = run_job_with_retry(
+                    self.runner,
+                    document,
+                    serial,
+                    self.log_signal.emit,
+                    retry_failed,
+                    lambda: self.stop_requested,
+                )
+                if not ok and capture_failure and not self.stop_requested:
+                    self.capture_failure_screen(path)
                 succeeded += int(ok)
                 self.log_signal.emit("用例完成" if ok else "用例失败")
+                status = "已完成" if ok else "失败"
+                self.app.call_ui(lambda row=index, value=status: self.set_queue_status(row, value))
                 value = round((index + 1) / len(queue) * 100)
                 self.app.call_ui(lambda current=value: self.progress.setValue(current))
             return succeeded
@@ -834,17 +937,31 @@ class PlaybackPage(QWidget):
         self.stop.setEnabled(False)
         threading.Thread(target=lambda: self.runner.stop(self.log_signal.emit), daemon=True).start()
 
+    def capture_failure_screen(self, job_path):
+        try:
+            image = self.app.adb.screenshot()
+            output_dir = APP_DIR / "logs" / "failures"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            output = output_dir / f"{stamp}-{safe_name(job_path.stem, 'job')}.png"
+            if not write_png(output, image):
+                raise RuntimeError("图像写入失败")
+            self.log_signal.emit(f"失败截图：{output}")
+        except Exception as error:
+            self.log_signal.emit(f"失败截图保存失败：{error}")
+
     def execution_finished(self, count):
-        self.start.setEnabled(True)
-        self.stop.setEnabled(False)
-        self.state.setText("已停止" if self.stop_requested else "已完成")
+        self.set_execution_active(False)
+        state = "stopped" if self.stop_requested else "success"
+        self.set_state("已停止" if self.stop_requested else "已完成", state)
         self.append_log(f"执行结束：成功 {count} / {len(self.queue)}")
+        self.app.finish_close_if_requested()
 
     def execution_failed(self, error):
-        self.start.setEnabled(True)
-        self.stop.setEnabled(False)
-        self.state.setText("失败")
+        self.set_execution_active(False)
+        self.set_state("失败", "failed")
         self.append_log(f"执行失败：{error}")
+        self.app.finish_close_if_requested()
 
 
 class Workbench(QMainWindow):
@@ -859,6 +976,9 @@ class Workbench(QMainWindow):
         self.screen_image = None
         self.workers = []
         self.dirty = False
+        self.execution_active = False
+        self.execution_source = ""
+        self.close_when_idle = False
         self.ui_call.connect(lambda callback: callback())
         self.resize(1600, 930)
         self.setMinimumSize(1280, 760)
@@ -870,12 +990,15 @@ class Workbench(QMainWindow):
         self.pages = QStackedWidget()
         self.record = RecordPage(self)
         self.playback = PlaybackPage(self)
+        self.semantic = SemanticNavigatorPage(self, JOBS_DIR / "semantic_map.json")
         self.pages.addWidget(self.record)
         self.pages.addWidget(self.playback)
+        self.pages.addWidget(self.semantic)
         root.addWidget(self.pages, 1)
         root.addWidget(self.build_statusbar())
         self.setCentralWidget(central)
         self.apply_style()
+        self.register_shortcuts()
         self.refresh_devices()
         self.playback.refresh_library()
         self.update_title()
@@ -902,6 +1025,11 @@ class Workbench(QMainWindow):
         self.play_button.setProperty("modeButton", True)
         self.play_button.clicked.connect(lambda: self.switch_page(1))
         layout.addWidget(self.play_button)
+        self.semantic_button = QPushButton("语义导航")
+        self.semantic_button.setCheckable(True)
+        self.semantic_button.setProperty("modeButton", True)
+        self.semantic_button.clicked.connect(lambda: self.switch_page(2))
+        layout.addWidget(self.semantic_button)
         layout.addStretch()
         label = QLabel("ADB 设备")
         label.setObjectName("muted")
@@ -910,11 +1038,12 @@ class Workbench(QMainWindow):
         self.devices.setMinimumWidth(220)
         self.devices.currentTextChanged.connect(self.device_changed)
         layout.addWidget(self.devices)
-        layout.addWidget(tool(self, "refresh", "刷新 ADB 设备", self.refresh_devices))
-        screenshot = QPushButton("截图")
-        screenshot.setObjectName("primaryButton")
-        screenshot.clicked.connect(self.capture_screen)
-        layout.addWidget(screenshot)
+        self.refresh_devices_button = tool(self, "refresh", "刷新 ADB 设备", self.refresh_devices)
+        layout.addWidget(self.refresh_devices_button)
+        self.screenshot_button = QPushButton("截图")
+        self.screenshot_button.setObjectName("primaryButton")
+        self.screenshot_button.clicked.connect(self.capture_screen)
+        layout.addWidget(self.screenshot_button)
         self.record_button.setChecked(True)
         return bar
 
@@ -943,19 +1072,21 @@ class Workbench(QMainWindow):
         #devicePane { background: #F6F7F9; border-right: 1px solid #E4E7EB; }
         #centerPane { background: #FFFFFF; border-right: 1px solid #E4E7EB; }
         #rightPane { background: #FAFAFB; }\n        #metadataBar { background: #FAFAFB; border-bottom: 1px solid #E4E7EB; }
+        #semanticPane { background: #FFFFFF; border-right: 1px solid #E4E7EB; }
+        QSplitter::handle { background: #E4E7EB; width: 1px; }
         #brand { font-size: 19px; font-weight: 700; }
-        #brandMark { background: #0A84FF; color: white; font-size: 16px; font-weight: 700;
+        #brandMark { background: #0067C5; color: white; font-size: 16px; font-weight: 700;
                      border-radius: 5px; min-width: 28px; min-height: 28px;
                      qproperty-alignment: AlignCenter; }
         #sectionTitle { font-size: 14px; font-weight: 650; color: #474B52; }
         #propertyTitle { padding: 12px 18px; background: #F5F6F8;
                          border-top: 1px solid #E4E7EB; border-bottom: 1px solid #E4E7EB;
                          font-weight: 650; }
-        #muted { color: #858B94; }
+        #muted { color: #66707A; }
         #selectionInfo { background: white; border: 1px solid #E0E4E9;
                          border-radius: 6px; padding: 9px 12px; color: #66707A; }
         QPushButton, QToolButton { background: #FFFFFF; border: 1px solid #DDE1E6;
-                                  border-radius: 6px; padding: 7px 13px; min-height: 18px; }
+                                  border-radius: 6px; padding: 7px 13px; min-height: 20px; }
         QPushButton:hover, QToolButton:hover { background: #F2F7FF; border-color: #8CC4FF; }
         QPushButton:pressed, QToolButton:pressed { background: #E5F1FF; }
         QPushButton:disabled, QToolButton:disabled { color: #B8BDC5; background: #F2F3F5; border-color: #E7E9EC; }
@@ -963,34 +1094,73 @@ class Workbench(QMainWindow):
         QPushButton[modeButton='true'] { background: #F2F3F5; border-color: transparent; font-weight: 600; padding: 8px 18px; }
         QPushButton[modeButton='true']:checked { background: #FFFFFF; border-color: #DDE1E6; }
         QPushButton[toolMode='true'] { padding: 6px 10px; color: #69717B; }
-        QPushButton[toolMode='true']:checked { color: #0A84FF; background: #EAF4FF; border-color: #B9DCFF; }
-        #primaryButton, #largePrimary { background: #0A84FF; color: #FFFFFF; border-color: #0A84FF; font-weight: 650; }
-        #primaryButton:hover, #largePrimary:hover { background: #0075E8; }
+        QPushButton[toolMode='true']:checked { color: #0067C5; background: #EAF4FF; border-color: #8CC4FF; }
+        #primaryButton, #largePrimary { background: #0067C5; color: #FFFFFF; border-color: #0067C5; font-weight: 650; }
+        #primaryButton:hover, #largePrimary:hover { background: #005AAE; }
         #largePrimary, #largeSecondary { min-height: 84px; font-size: 15px; }
-        QPushButton[danger='true'] { color: #E5484D; background: #FFF5F5; border-color: #FFD6D8; }
-        QPushButton[link='true'] { color: #0A84FF; border: none; background: transparent; padding: 4px; }
+        QPushButton[danger='true'] { color: #B4232A; background: #FFF5F5; border-color: #F3B8BC; }
+        QPushButton[link='true'] { color: #0067C5; border: none; background: transparent; padding: 4px; }
         QLineEdit, QComboBox, QSpinBox { background: #FFFFFF; border: 1px solid #DDE1E6; border-radius: 6px; padding: 7px 9px; min-height: 20px; }
-        QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border-color: #0A84FF; }
-        QTableWidget, QTreeWidget, QPlainTextEdit { border: none; background: #FFFFFF; outline: none; selection-background-color: #E4F1FF; selection-color: #0969C8; }
+        QPushButton:focus, QToolButton:focus, QLineEdit:focus, QComboBox:focus, QSpinBox:focus,
+        QTableWidget:focus, QTreeWidget:focus, QPlainTextEdit:focus { border: 2px solid #0067C5; }
+        QCheckBox:focus { color: #005AAE; background: #EAF4FF; }
+        QTableWidget, QTreeWidget, QPlainTextEdit { border: 1px solid transparent; background: #FFFFFF; selection-background-color: #E4F1FF; selection-color: #005AAE; }
         QHeaderView::section { background: #F3F4F6; color: #747A83; border: none; border-bottom: 1px solid #E4E7EB; padding: 9px 8px; font-weight: 600; }
         QTableWidget::item { padding: 8px; border-bottom: 1px solid #EFF1F3; }
         QTreeWidget::item { min-height: 34px; }
         #settingRow { background: #FFFFFF; border: 1px solid #E4E7EB; border-radius: 7px; min-height: 46px; }
         #logView { background: #F7F8FA; border-top: 1px solid #E4E7EB; color: #60666E; padding: 10px; }
-        #successPill { background: #E7F8EC; color: #249B4A; border-radius: 12px; padding: 4px 12px; font-weight: 650; }
+        #statusPill { border-radius: 12px; padding: 4px 12px; font-weight: 650; }
+        QLabel[runState='idle'], QLabel[runState='stopped'] { background: #EEF0F2; color: #545B64; }
+        QLabel[runState='running'] { background: #E4F1FF; color: #005AAE; }
+        QLabel[runState='success'] { background: #E7F8EC; color: #176F36; }
+        QLabel[runState='failed'] { background: #FFF0F1; color: #A61B22; }
         QProgressBar { border: none; background: #EEF0F2; }
-        QProgressBar::chunk { background: #0A84FF; }
+        QProgressBar::chunk { background: #0067C5; }
         QScrollBar:vertical { background: transparent; width: 10px; }
         QScrollBar::handle:vertical { background: #C9CDD3; min-height: 32px; border-radius: 5px; margin: 2px; }
         QSlider::groove:horizontal { height: 5px; background: #DFE3E7; border-radius: 2px; }
-        QSlider::handle:horizontal { width: 15px; margin: -5px 0; border-radius: 7px; background: #0A84FF; }
+        QSlider::handle:horizontal { width: 15px; margin: -5px 0; border-radius: 7px; background: #0067C5; }
         """)
 
+    def register_shortcuts(self):
+        shortcuts = (
+            ("Ctrl+1", lambda: self.switch_page(0)),
+            ("Ctrl+2", lambda: self.switch_page(1)),
+            ("Ctrl+3", lambda: self.switch_page(2)),
+            ("Ctrl+S", self.save_job),
+            ("Ctrl+O", self.open_job),
+        )
+        self.shortcuts = []
+        self.idle_shortcuts = []
+        for sequence, callback in shortcuts:
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.activated.connect(callback)
+            self.shortcuts.append(shortcut)
+            self.idle_shortcuts.append(shortcut)
+
+    def set_execution_active(self, active, source="playback"):
+        self.execution_active = active
+        self.execution_source = source if active else ""
+        self.record_button.setEnabled(not active)
+        self.play_button.setEnabled(not active)
+        self.semantic_button.setEnabled(not active)
+        self.devices.setEnabled(not active)
+        self.refresh_devices_button.setEnabled(not active)
+        self.screenshot_button.setEnabled(not active)
+        self.record.setEnabled(not active)
+        for shortcut in self.idle_shortcuts:
+            shortcut.setEnabled(not active)
+        self.playback.device.setEnabled(not active)
+
     def switch_page(self, index):
+        if self.execution_active and index != self.pages.currentIndex():
+            return
         self.pages.setCurrentIndex(index)
         self.record_button.setChecked(index == 0)
         self.play_button.setChecked(index == 1)
-        if index:
+        self.semantic_button.setChecked(index == 2)
+        if index == 1:
             self.playback.refresh_library()
 
     def keep_worker(self, worker):
@@ -1025,6 +1195,7 @@ class Workbench(QMainWindow):
 
     def device_changed(self, serial):
         self.adb.serial = serial
+        self.semantic.device_changed(serial)
         connected = bool(serial)
         self.adb_status.setText(f"●  ADB：{'已连接' if connected else '未连接'}")
         self.adb_status.setStyleSheet(f"color: {'#22B455' if connected else '#A0A5AD'}")
@@ -1082,6 +1253,10 @@ class Workbench(QMainWindow):
             return
         self.document.name = name
         self.document.category = category
+        errors = self.document.validate()
+        if errors:
+            QMessageBox.warning(self, "用例无法保存", "\n".join(errors))
+            return
         path = self.current_path
         if path is None:
             path = JOBS_DIR / safe_name(category, "\u9ed8\u8ba4") / f"{safe_name(name, 'case')}.maa_job.json"
@@ -1096,6 +1271,12 @@ class Workbench(QMainWindow):
             QMessageBox.critical(self, "\u4fdd\u5b58\u5931\u8d25", str(error))
 
     def export_pipeline(self):
+        self.document.name = self.record.case_name.text().strip()
+        self.document.category = self.record.case_category.text().strip() or "默认"
+        errors = self.document.validate()
+        if errors:
+            QMessageBox.warning(self, "用例无法导出", "\n".join(errors))
+            return
         default = ASSETS_DIR / "resource" / "pipeline" / f"{safe_name(self.document.name)}.json"
         value, _filter = QFileDialog.getSaveFileName(self, "导出 Pipeline", str(default), "JSON (*.json)")
         if value:
@@ -1115,12 +1296,27 @@ class Workbench(QMainWindow):
     def toast(self, message):
         self.message_status.setText(message)
 
+    def finish_close_if_requested(self):
+        if self.close_when_idle:
+            self.close()
+
     def closeEvent(self, event):
+        if self.close_when_idle and not self.execution_active:
+            self.close_when_idle = False
+            event.accept()
+            return
         if self.dirty and QMessageBox.question(self, "退出", "当前修改尚未保存，确认退出吗？") != QMessageBox.StandardButton.Yes:
             event.ignore()
             return
-        if self.playback.runner.running:
-            self.playback.stop_execution()
+        if self.execution_active:
+            self.close_when_idle = True
+            if self.execution_source == "playback":
+                self.message_status.setText("正在停止任务，停止后自动退出...")
+                self.playback.stop_execution()
+            else:
+                self.message_status.setText("正在等待语义操作完成，完成后自动退出...")
+            event.ignore()
+            return
         event.accept()
 
 

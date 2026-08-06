@@ -34,20 +34,20 @@
     },
     {
       "name": "搜索",
-      "recognition": "OCR",
+      "recognition": "DirectHit",
       "action": "Click",
       "template": "",
       "roi": [
-        292,
-        187,
-        144,
-        50
+        280,
+        270,
+        160,
+        80
       ],
-      "expected": "搜索",
+      "expected": "",
       "threshold": 0.8,
       "target": [
-        351,
-        215
+        360,
+        309
       ],
       "swipe_end": null,
       "input_text": "",

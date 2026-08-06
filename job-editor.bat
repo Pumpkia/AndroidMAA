@@ -1,3 +1,3 @@
 @echo off
 cd /d "%~dp0"
-python tools\job_editor.py
+python tools\qt_workbench.py
