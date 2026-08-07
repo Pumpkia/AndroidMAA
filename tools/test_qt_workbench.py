@@ -1,15 +1,20 @@
 from pathlib import Path
+import os
 import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import cv2
 import numpy as np
+from PySide6.QtWidgets import QApplication, QFrame, QTableWidget
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from qt_workbench import AdbClient, run_job_with_retry, write_png
+from qt_workbench import AdbClient, Workbench, run_job_with_retry, write_png
 
 
 class FakeRunner:
@@ -95,6 +100,38 @@ class AdbClientTests(unittest.TestCase):
         )
 
         self.assertEqual(client.shell(["echo", "value"]), b"result")
+
+
+class VisualSystemTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.qt_app = QApplication.instance() or QApplication([])
+
+    def test_apple_style_navigation_and_tables_are_applied(self):
+        with patch.object(Workbench, "refresh_devices", lambda _window: None):
+            window = Workbench()
+
+        try:
+            self.assertIsNotNone(window.findChild(QFrame, "modeSwitcher"))
+            self.assertIn("#0066CC", window.styleSheet())
+            self.assertIn("#modeSwitcher", window.styleSheet())
+            self.assertTrue(
+                all(table.alternatingRowColors() for table in window.findChildren(QTableWidget))
+            )
+            for index, expected in enumerate(
+                ((True, False, False), (False, True, False), (False, False, True))
+            ):
+                window.switch_page(index)
+                self.assertEqual(
+                    (
+                        window.record_button.isChecked(),
+                        window.play_button.isChecked(),
+                        window.semantic_button.isChecked(),
+                    ),
+                    expected,
+                )
+        finally:
+            window.close()
 
 
 if __name__ == "__main__":

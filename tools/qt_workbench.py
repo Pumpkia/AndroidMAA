@@ -168,12 +168,12 @@ class PhonePreview(QWidget):
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor("#F6F7F9"))
+        painter.fillRect(self.rect(), QColor("#F5F5F7"))
         width = max(210, min(self.width() - 72, int((self.height() - 120) * .49)))
         height = int(width / .49)
         outer = QRect((self.width() - width) // 2, max(40, (self.height() - height) // 2), width, height)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#202124"))
+        painter.setBrush(QColor("#1C1C1E"))
         painter.drawRoundedRect(outer, 42, 42)
         screen = outer.adjusted(13, 13, -13, -13)
         path = QPainterPath()
@@ -185,10 +185,10 @@ class PhonePreview(QWidget):
             fitted = self.pixmap.scaled(screen.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             painter.drawPixmap(screen.center().x() - fitted.width() // 2, screen.center().y() - fitted.height() // 2, fitted)
         painter.restore()
-        painter.setBrush(QColor("#202124"))
+        painter.setBrush(QColor("#1C1C1E"))
         painter.drawRoundedRect(QRect(outer.center().x() - 42, outer.top() + 13, 84, 24), 12, 12)
         if not self.pixmap:
-            painter.setPen(QColor("#777B82"))
+            painter.setPen(QColor("#8E8E93"))
             painter.setFont(QFont("Microsoft YaHei UI", 10))
             painter.drawText(screen, Qt.AlignmentFlag.AlignCenter, "连接 ADB 设备并点击截图")
 
@@ -261,37 +261,37 @@ class Canvas(QWidget):
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor("#FBFCFD"))
-        painter.setPen(QPen(QColor("#D8DEE6"), 1))
+        painter.fillRect(self.rect(), QColor("#F5F5F7"))
+        painter.setPen(QPen(QColor("#D1D1D6"), 1))
         for x in range(14, self.width(), 24):
             for y in range(14, self.height(), 24):
                 painter.drawPoint(x, y)
         area = self.image_rect()
         painter.setBrush(QColor("#15171A"))
-        painter.setPen(QPen(QColor("#CBD1D8"), 1))
+        painter.setPen(QPen(QColor("#C7C7CC"), 1))
         painter.drawRoundedRect(area.adjusted(-1, -1, 1, 1), 7, 7)
         if self.pixmap:
             fitted = self.pixmap.scaled(area.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             painter.drawPixmap(area.center().x() - fitted.width() // 2, area.center().y() - fitted.height() // 2, fitted)
         else:
-            painter.setPen(QColor("#9AA0A8"))
+            painter.setPen(QColor("#8E8E93"))
             painter.drawText(area, Qt.AlignmentFlag.AlignCenter, "截图后在这里框选识别区域")
-        painter.setPen(QPen(QColor("#21C55D"), 2, Qt.PenStyle.DashLine))
+        painter.setPen(QPen(QColor("#34C759"), 2, Qt.PenStyle.DashLine))
         if self.roi:
             painter.drawRect(QRect(self.to_canvas(self.roi[:2]), self.to_canvas([self.roi[0] + self.roi[2], self.roi[1] + self.roi[3]])).normalized())
         if self.start and self.current and self.mode == "roi":
             painter.drawRect(QRect(self.start, self.current).normalized())
         if self.target:
             point = self.to_canvas(self.target)
-            painter.setPen(QPen(QColor("#FF9500"), 3))
+            painter.setPen(QPen(QColor("#FF9F0A"), 3))
             painter.drawEllipse(point, 9, 9)
             painter.drawLine(point + QPoint(-14, 0), point + QPoint(14, 0))
             painter.drawLine(point + QPoint(0, -14), point + QPoint(0, 14))
         if self.target and self.swipe_end:
-            painter.setPen(QPen(QColor("#0067C5"), 3))
+            painter.setPen(QPen(QColor("#007AFF"), 3))
             painter.drawLine(self.to_canvas(self.target), self.to_canvas(self.swipe_end))
         if self.start and self.current and self.mode == "swipe":
-            painter.setPen(QPen(QColor("#0067C5"), 3))
+            painter.setPen(QPen(QColor("#007AFF"), 3))
             painter.drawLine(self.start, self.current)
 
 
@@ -998,6 +998,8 @@ class Workbench(QMainWindow):
         root.addWidget(self.build_statusbar())
         self.setCentralWidget(central)
         self.apply_style()
+        for table in self.findChildren(QTableWidget):
+            table.setAlternatingRowColors(True)
         self.register_shortcuts()
         self.refresh_devices()
         self.playback.refresh_library()
@@ -1014,22 +1016,28 @@ class Workbench(QMainWindow):
         brand = QLabel("MaaQQLogin")
         brand.setObjectName("brand")
         layout.addWidget(brand)
-        layout.addSpacing(24)
+        layout.addSpacing(20)
+        modes = QFrame()
+        modes.setObjectName("modeSwitcher")
+        mode_layout = QHBoxLayout(modes)
+        mode_layout.setContentsMargins(3, 3, 3, 3)
+        mode_layout.setSpacing(2)
         self.record_button = QPushButton("用例录制")
         self.record_button.setCheckable(True)
         self.record_button.setProperty("modeButton", True)
         self.record_button.clicked.connect(lambda: self.switch_page(0))
-        layout.addWidget(self.record_button)
+        mode_layout.addWidget(self.record_button)
         self.play_button = QPushButton("用例回放")
         self.play_button.setCheckable(True)
         self.play_button.setProperty("modeButton", True)
         self.play_button.clicked.connect(lambda: self.switch_page(1))
-        layout.addWidget(self.play_button)
+        mode_layout.addWidget(self.play_button)
         self.semantic_button = QPushButton("语义导航")
         self.semantic_button.setCheckable(True)
         self.semantic_button.setProperty("modeButton", True)
         self.semantic_button.clicked.connect(lambda: self.switch_page(2))
-        layout.addWidget(self.semantic_button)
+        mode_layout.addWidget(self.semantic_button)
+        layout.addWidget(modes)
         layout.addStretch()
         label = QLabel("ADB 设备")
         label.setObjectName("muted")
@@ -1065,62 +1073,74 @@ class Workbench(QMainWindow):
         return bar
     def apply_style(self):
         self.setStyleSheet("""
-        * { font-family: 'Microsoft YaHei UI'; font-size: 13px; color: #24272C; }
-        QMainWindow, QWidget { background: #FFFFFF; }
-        #topBar { border-bottom: 1px solid #E4E7EB; min-height: 50px; }
-        #bottomBar { border-top: 1px solid #E4E7EB; min-height: 28px; }
-        #devicePane { background: #F6F7F9; border-right: 1px solid #E4E7EB; }
-        #centerPane { background: #FFFFFF; border-right: 1px solid #E4E7EB; }
-        #rightPane { background: #FAFAFB; }\n        #metadataBar { background: #FAFAFB; border-bottom: 1px solid #E4E7EB; }
-        #semanticPane { background: #FFFFFF; border-right: 1px solid #E4E7EB; }
-        QSplitter::handle { background: #E4E7EB; width: 1px; }
-        #brand { font-size: 19px; font-weight: 700; }
-        #brandMark { background: #0067C5; color: white; font-size: 16px; font-weight: 700;
-                     border-radius: 5px; min-width: 28px; min-height: 28px;
+        * { font-family: 'Segoe UI Variable Text', 'SF Pro Text', 'Microsoft YaHei UI';
+            font-size: 13px; color: #1D1D1F; }
+        QMainWindow, QStackedWidget { background: #F5F5F7; }
+        #topBar { background: #F8F8FA; border-bottom: 1px solid #DCDCE1; min-height: 54px; }
+        #bottomBar { background: #F8F8FA; border-top: 1px solid #DCDCE1; min-height: 28px; }
+        #devicePane { background: #F5F5F7; border-right: 1px solid #E5E5EA; }
+        #centerPane { background: #FFFFFF; border-right: 1px solid #E5E5EA; }
+        #rightPane { background: #F8F8FA; }
+        #metadataBar { background: #F5F5F7; border-bottom: 1px solid #E5E5EA; }
+        #semanticPane { background: #FFFFFF; border-right: 1px solid #E5E5EA; }
+        QSplitter::handle { background: #E5E5EA; width: 1px; }
+        #brand { font-size: 18px; font-weight: 650; }
+        #brandMark { background: #0066CC; color: white; font-size: 15px; font-weight: 700;
+                     border-radius: 7px; min-width: 30px; min-height: 30px;
                      qproperty-alignment: AlignCenter; }
-        #sectionTitle { font-size: 14px; font-weight: 650; color: #474B52; }
-        #propertyTitle { padding: 12px 18px; background: #F5F6F8;
-                         border-top: 1px solid #E4E7EB; border-bottom: 1px solid #E4E7EB;
+        #modeSwitcher { background: #E9E9ED; border: 1px solid #DEDEE3; border-radius: 9px; }
+        #sectionTitle { font-size: 14px; font-weight: 650; color: #3A3A3C; }
+        #propertyTitle { padding: 11px 18px; background: #F5F5F7;
+                         border-top: 1px solid #E5E5EA; border-bottom: 1px solid #E5E5EA;
                          font-weight: 650; }
-        #muted { color: #66707A; }
-        #selectionInfo { background: white; border: 1px solid #E0E4E9;
-                         border-radius: 6px; padding: 9px 12px; color: #66707A; }
-        QPushButton, QToolButton { background: #FFFFFF; border: 1px solid #DDE1E6;
-                                  border-radius: 6px; padding: 7px 13px; min-height: 20px; }
-        QPushButton:hover, QToolButton:hover { background: #F2F7FF; border-color: #8CC4FF; }
-        QPushButton:pressed, QToolButton:pressed { background: #E5F1FF; }
-        QPushButton:disabled, QToolButton:disabled { color: #B8BDC5; background: #F2F3F5; border-color: #E7E9EC; }
+        #muted { color: #6E6E73; }
+        #selectionInfo { background: #FFFFFF; border: 1px solid #D2D2D7;
+                         border-radius: 8px; padding: 9px 12px; color: #6E6E73; }
+        QPushButton, QToolButton { background: #FFFFFF; border: 1px solid #D2D2D7;
+                                  border-radius: 7px; padding: 7px 12px; min-height: 22px; }
+        QPushButton:hover, QToolButton:hover { background: #F2F2F7; border-color: #AEAEB2; }
+        QPushButton:pressed, QToolButton:pressed { background: #E5E5EA; border-color: #8E8E93; }
+        QPushButton:disabled, QToolButton:disabled { color: #AEAEB2; background: #F2F2F7; border-color: #E5E5EA; }
         QPushButton[compact='true'] { padding: 5px 9px; }
-        QPushButton[modeButton='true'] { background: #F2F3F5; border-color: transparent; font-weight: 600; padding: 8px 18px; }
-        QPushButton[modeButton='true']:checked { background: #FFFFFF; border-color: #DDE1E6; }
-        QPushButton[toolMode='true'] { padding: 6px 10px; color: #69717B; }
-        QPushButton[toolMode='true']:checked { color: #0067C5; background: #EAF4FF; border-color: #8CC4FF; }
-        #primaryButton, #largePrimary { background: #0067C5; color: #FFFFFF; border-color: #0067C5; font-weight: 650; }
-        #primaryButton:hover, #largePrimary:hover { background: #005AAE; }
-        #largePrimary, #largeSecondary { min-height: 84px; font-size: 15px; }
-        QPushButton[danger='true'] { color: #B4232A; background: #FFF5F5; border-color: #F3B8BC; }
-        QPushButton[link='true'] { color: #0067C5; border: none; background: transparent; padding: 4px; }
-        QLineEdit, QComboBox, QSpinBox { background: #FFFFFF; border: 1px solid #DDE1E6; border-radius: 6px; padding: 7px 9px; min-height: 20px; }
+        QPushButton[modeButton='true'] { background: transparent; border-color: transparent;
+                                         border-radius: 6px; font-weight: 600; padding: 6px 15px; min-height: 22px; }
+        QPushButton[modeButton='true']:hover { background: #F2F2F7; }
+        QPushButton[modeButton='true']:checked { background: #FFFFFF; border-color: #D2D2D7; color: #1D1D1F; }
+        QPushButton[toolMode='true'] { padding: 6px 10px; color: #6E6E73; }
+        QPushButton[toolMode='true']:checked { color: #007AFF; background: #EAF3FF; border-color: #8FC5FF; }
+        #primaryButton, #largePrimary { background: #0066CC; color: #FFFFFF; border-color: #0066CC; font-weight: 650; }
+        #primaryButton:hover, #largePrimary:hover { background: #005BB8; border-color: #005BB8; }
+        #primaryButton:pressed, #largePrimary:pressed { background: #004C99; border-color: #004C99; }
+        #largePrimary, #largeSecondary { min-height: 46px; font-size: 14px; }
+        QPushButton[danger='true'] { color: #D70015; background: #FFF2F3; border-color: #FFC7CC; }
+        QPushButton[danger='true']:hover { background: #FFE5E8; border-color: #FF9DA7; }
+        QPushButton[link='true'] { color: #007AFF; border: none; background: transparent; padding: 4px; }
+        QLineEdit, QComboBox, QSpinBox { background: #FFFFFF; border: 1px solid #C7C7CC;
+                                        border-radius: 7px; padding: 7px 9px; min-height: 22px; }
         QPushButton:focus, QToolButton:focus, QLineEdit:focus, QComboBox:focus, QSpinBox:focus,
-        QTableWidget:focus, QTreeWidget:focus, QPlainTextEdit:focus { border: 2px solid #0067C5; }
-        QCheckBox:focus { color: #005AAE; background: #EAF4FF; }
-        QTableWidget, QTreeWidget, QPlainTextEdit { border: 1px solid transparent; background: #FFFFFF; selection-background-color: #E4F1FF; selection-color: #005AAE; }
-        QHeaderView::section { background: #F3F4F6; color: #747A83; border: none; border-bottom: 1px solid #E4E7EB; padding: 9px 8px; font-weight: 600; }
-        QTableWidget::item { padding: 8px; border-bottom: 1px solid #EFF1F3; }
+        QTableWidget:focus, QTreeWidget:focus, QPlainTextEdit:focus { border: 2px solid #007AFF; }
+        QCheckBox:focus { color: #0057B8; background: #EAF3FF; }
+        QTableWidget, QTreeWidget, QPlainTextEdit { border: 1px solid #E5E5EA; border-radius: 8px;
+                                                   background: #FFFFFF; alternate-background-color: #FAFAFC;
+                                                   selection-background-color: #DCEEFF; selection-color: #1D1D1F; }
+        QHeaderView::section { background: #F5F5F7; color: #6E6E73; border: none;
+                               border-bottom: 1px solid #E5E5EA; padding: 9px 8px; font-weight: 600; }
+        QTableWidget::item { padding: 8px; border-bottom: 1px solid #F2F2F7; }
         QTreeWidget::item { min-height: 34px; }
-        #settingRow { background: #FFFFFF; border: 1px solid #E4E7EB; border-radius: 7px; min-height: 46px; }
-        #logView { background: #F7F8FA; border-top: 1px solid #E4E7EB; color: #60666E; padding: 10px; }
-        #statusPill { border-radius: 12px; padding: 4px 12px; font-weight: 650; }
-        QLabel[runState='idle'], QLabel[runState='stopped'] { background: #EEF0F2; color: #545B64; }
-        QLabel[runState='running'] { background: #E4F1FF; color: #005AAE; }
-        QLabel[runState='success'] { background: #E7F8EC; color: #176F36; }
-        QLabel[runState='failed'] { background: #FFF0F1; color: #A61B22; }
-        QProgressBar { border: none; background: #EEF0F2; }
-        QProgressBar::chunk { background: #0067C5; }
+        #settingRow { background: #FFFFFF; border: 1px solid #E5E5EA; border-radius: 8px; min-height: 44px; }
+        #logView { background: #F5F5F7; border: 1px solid #E5E5EA; color: #48484A; padding: 10px; }
+        #statusPill { border-radius: 11px; padding: 4px 11px; font-weight: 650; }
+        QLabel[runState='idle'], QLabel[runState='stopped'] { background: #E5E5EA; color: #48484A; }
+        QLabel[runState='running'] { background: #DCEEFF; color: #0057B8; }
+        QLabel[runState='success'] { background: #E3F8E8; color: #187A34; }
+        QLabel[runState='failed'] { background: #FFE5E8; color: #B50016; }
+        QProgressBar { border: none; background: #E5E5EA; }
+        QProgressBar::chunk { background: #007AFF; }
         QScrollBar:vertical { background: transparent; width: 10px; }
-        QScrollBar::handle:vertical { background: #C9CDD3; min-height: 32px; border-radius: 5px; margin: 2px; }
-        QSlider::groove:horizontal { height: 5px; background: #DFE3E7; border-radius: 2px; }
-        QSlider::handle:horizontal { width: 15px; margin: -5px 0; border-radius: 7px; background: #0067C5; }
+        QScrollBar::handle:vertical { background: #C7C7CC; min-height: 32px; border-radius: 5px; margin: 2px; }
+        QSlider::groove:horizontal { height: 5px; background: #D1D1D6; border-radius: 2px; }
+        QSlider::handle:horizontal { width: 15px; margin: -5px 0; border-radius: 7px; background: #007AFF; }
+        QToolTip { background: #2C2C2E; color: #FFFFFF; border: none; border-radius: 5px; padding: 5px 8px; }
         """)
 
     def register_shortcuts(self):
