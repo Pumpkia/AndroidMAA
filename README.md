@@ -99,9 +99,13 @@ python tools/qt_workbench.py
 ```powershell
 python tools/validate_schema.py
 ```
-## 打包 Windows v2.1.0
+## 打包发布包
 
-在项目根目录执行：
+Windows 和 macOS 发布包需要在对应系统上构建；PyInstaller 不建议跨系统交叉打包。
+
+### Windows v2.1.0
+
+在 Windows 项目根目录执行：
 
 ```powershell
 python -m pip install -r tools/requirements.txt
@@ -115,6 +119,35 @@ release/QQJobEditor-v2.1.0-win-x64.zip
 ```
 
 解压完整 ZIP 后运行 `QQJobEditor/QQJobEditor.exe`。不要只复制 EXE；`_internal/`、`assets/`、`jobs/` 和 `platform-tools/` 都是运行所需内容。
+
+### macOS v2.1.0
+
+在 macOS 项目根目录执行：
+
+```bash
+python3 -m pip install -r tools/requirements.txt
+curl -L --fail --output /tmp/platform-tools-latest-darwin.zip https://dl.google.com/android/repository/platform-tools-latest-darwin.zip
+unzip -q -o /tmp/platform-tools-latest-darwin.zip -d /tmp
+python3 tools/build_release_macos.py --version v2.1.0 --platform-tools /tmp/platform-tools
+```
+
+脚本会校验 Schema、运行单元测试、使用 PyInstaller 生成 `.app`，再生成 ZIP 和 DMG：
+
+```text
+release/QQJobEditor-v2.1.0-macos-arm64.zip
+release/QQJobEditor-v2.1.0-macos-arm64.dmg
+```
+
+macOS 包内置 Darwin `platform-tools/adb`。没有 Apple Developer ID 证书时，脚本会使用本地 ad-hoc 签名；首次打开仍可能需要右键应用并选择“打开”。
+
+### GitHub Actions 双系统构建
+
+推送 `v*` 标签，或在 GitHub Actions 手动运行 `Build release packages` 工作流，会分别在 Windows 和 macOS runner 上构建并上传两个系统的包：
+
+```bash
+git tag v2.1.0
+git push origin v2.1.0
+```
 
 ## 目录结构
 
@@ -139,8 +172,10 @@ MaaQQLogin/
 |   |-- job_model.py                  # 用例模型与 Pipeline 导出
 |   |-- validate_schema.py            # MAA Schema 校验
 |   |-- build_release.ps1             # Windows 打包脚本
+|   |-- build_release_macos.py        # macOS 打包脚本
 |   `-- requirements.txt              # Python 依赖
 |-- QQJobEditor.spec                  # PyInstaller 配置
+|-- QQJobEditor.macos.spec            # macOS PyInstaller 配置
 |-- AGENTS.md                         # Codex 项目规则与验证命令
 |-- job-editor.bat                    # 源码启动入口
 |-- 界面功能说明.md                    # 当前 Qt 界面的详细操作说明

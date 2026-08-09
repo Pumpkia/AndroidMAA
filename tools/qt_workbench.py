@@ -32,7 +32,15 @@ def app_dir():
 APP_DIR = app_dir()
 ASSETS_DIR = APP_DIR / "assets"
 JOBS_DIR = APP_DIR / "jobs"
-ADB_EXE = APP_DIR / "platform-tools" / "adb.exe"
+
+
+def adb_executable():
+    names = ("adb.exe", "adb") if os.name == "nt" else ("adb", "adb.exe")
+    for name in names:
+        candidate = APP_DIR / "platform-tools" / name
+        if candidate.exists():
+            return candidate
+    return Path("adb")
 
 RECOGNITION_OPTIONS = (("\u6a21\u677f\u5339\u914d", "TemplateMatch"), ("\u6587\u5b57\u8bc6\u522b (OCR)", "OCR"), ("\u76f4\u63a5\u547d\u4e2d", "DirectHit"))
 ACTION_OPTIONS = (("\u70b9\u51fb", "Click"), ("\u8f93\u5165\u6587\u672c", "InputText"), ("\u6ed1\u52a8", "Swipe"), ("\u6309\u952e", "ClickKey"), ("\u7b49\u5f85", "DoNothing"))
@@ -89,7 +97,7 @@ class AdbClient:
         self.serial = ""
 
     def run(self, args, timeout=20):
-        executable = ADB_EXE if ADB_EXE.exists() else Path("adb")
+        executable = adb_executable()
         return subprocess.run(
             [str(executable), *args], capture_output=True, timeout=timeout,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,

@@ -10,8 +10,10 @@ dist/
 release/
 .packaging/
 .packaging-build/
+.packaging-macos/
 install/
 *.zip
+work/
 
 # Runtime logs and debug captures
 logs/

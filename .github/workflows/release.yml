@@ -1,0 +1,72 @@
+name: Build release packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example v2.1.0
+        required: true
+        default: v2.1.0
+  push:
+    tags:
+      - "v*"
+
+env:
+  VERSION: ${{ github.event.inputs.version || github.ref_name }}
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r tools/requirements.txt
+
+      - name: Build Windows package
+        shell: pwsh
+        run: .\tools\build_release.ps1 -Version "$env:VERSION"
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QQJobEditor-${{ env.VERSION }}-win-x64
+          path: release/*.zip
+
+  macos:
+    name: macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r tools/requirements.txt
+
+      - name: Download macOS platform-tools
+        run: |
+          curl -L --fail --output "$RUNNER_TEMP/platform-tools-latest-darwin.zip" https://dl.google.com/android/repository/platform-tools-latest-darwin.zip
+          unzip -q "$RUNNER_TEMP/platform-tools-latest-darwin.zip" -d "$RUNNER_TEMP"
+
+      - name: Build macOS package
+        run: python tools/build_release_macos.py --version "$VERSION" --platform-tools "$RUNNER_TEMP/platform-tools"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: QQJobEditor-${{ env.VERSION }}-macos
+          path: |
+            release/*.zip
+            release/*.dmg

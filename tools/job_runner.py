@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import threading
 from typing import Callable
@@ -77,7 +78,7 @@ class MaaJobRunner:
                 raise RuntimeError("已有作业正在执行")
 
         Toolkit.init_option(self.assets_dir)
-        adb_path = self.app_dir / "platform-tools" / "adb.exe"
+        adb_path = self._adb_path()
         devices = Toolkit.find_adb_devices(adb_path if adb_path.exists() else None)
         device = next((item for item in devices if item.address == serial), None)
         if device is None:
@@ -143,3 +144,11 @@ class MaaJobRunner:
         emit("正在停止作业…")
         tasker.post_stop().wait()
         return True
+
+    def _adb_path(self) -> Path:
+        names = ("adb.exe", "adb") if os.name == "nt" else ("adb", "adb.exe")
+        for name in names:
+            candidate = self.app_dir / "platform-tools" / name
+            if candidate.exists():
+                return candidate
+        return Path("adb")

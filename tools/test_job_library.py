@@ -14,6 +14,7 @@ class JobLibraryTests(unittest.TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name) / "作业"
         self.library = JobLibrary(self.root)
+        self.root = self.library.root
 
     def tearDown(self):
         self.temporary_directory.cleanup()
