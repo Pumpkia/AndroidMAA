@@ -4,12 +4,12 @@ Qdd 是基于 [MaaFramework](https://github.com/MaaXYZ/MaaFramework) 的 Android
 
 ## 环境要求
 
-- Windows 10/11（64 位）
+- Windows 10/11（64 位）或 macOS 13 及更高版本
 - Python 3.10 或更高版本
 - 已安装 QQ App 的 Android 真机或模拟器
 - 设备已开启开发者选项和 USB 调试，并完成 ADB 授权
 
-项目自带 Windows `platform-tools`。也可以使用系统 `PATH` 中的 `adb`。
+Windows 发布包内置 Windows `platform-tools`，macOS 发布包内置 Darwin 版本；源码运行也可以使用系统 `PATH` 中的 `adb`。
 
 ## 界面布局
 
@@ -91,8 +91,8 @@ python tools/qt_workbench.py
 - 支持逐项执行状态、失败后单次重试和失败设备截图。
 - 支持真机控件扫描、双坐标预览、区域命名，以及跨页面点击、检查和识别。
 - 支持删除单个用例；分类管理和拖动迁移暂未在当前 Qt 工作台中提供。
-- 打包成功后自动清理临时目录，并更新 `dist/Qdd/` 中的完整可运行目录。
-- 发布包使用空用例仓库生成，不迁移旧版用例、语义地图或录制截图。
+- 打包成功后自动清理临时目录，并更新 Windows `dist/Qdd/` 或 macOS `dist/Qdd.app` 中的完整可运行目录。
+- ZIP/DMG 使用空用例仓库生成，不包含旧用例、语义地图或录制截图；重建完成后的本地运行目录会保留原有用例及其引用模板。
 
 ## MAA 兼容性
 
@@ -137,9 +137,11 @@ python3 tools/build_release_macos.py --version v2.1.0 --platform-tools /tmp/plat
 
 脚本会校验 Schema、运行单元测试、使用 PyInstaller 生成 `.app`，再生成 ZIP 和 DMG：
 
+ZIP 和 DMG 始终使用空用例仓库；归档完成后，脚本才把现有 `dist/Qdd.app` 中的用例和安全引用模板恢复到新的本地应用并重新签名。
+
 ```text
-release/QQJobEditor-v2.1.0-macos-arm64.zip
-release/QQJobEditor-v2.1.0-macos-arm64.dmg
+release/Qdd-v2.1.0-macos-arm64.zip
+release/Qdd-v2.1.0-macos-arm64.dmg
 ```
 
 macOS 包内置 Darwin `platform-tools/adb`。没有 Apple Developer ID 证书时，脚本会使用本地 ad-hoc 签名；首次打开仍可能需要右键应用并选择“打开”。
@@ -165,7 +167,7 @@ Qdd/
 |       `-- pipeline/                 # 导出的 Pipeline
 |-- jobs/                             # 用例 JSON 与分类目录
 |   `-- semantic_map.json             # 页面、命名区域与导航关系
-|-- platform-tools/                   # Windows ADB 运行时
+|-- platform-tools/                   # 当前系统的 ADB 运行时
 |-- tools/
 |   |-- qt_workbench.py               # Qt 主窗口、用例录制与回放
 |   |-- semantic_navigator.py         # 控件扫描、语义地图与路径执行
@@ -178,9 +180,8 @@ Qdd/
 |   |-- build_release.ps1             # Windows 打包脚本
 |   |-- build_release_macos.py        # macOS 打包脚本
 |   `-- requirements.txt              # Python 依赖
-|-- QQJobEditor.spec                  # PyInstaller 配置
-|-- QQJobEditor.macos.spec            # macOS PyInstaller 配置
-|-- Qdd.spec                          # PyInstaller 配置与应用图标
+|-- Qdd.spec                          # Windows PyInstaller 配置与应用图标
+|-- Qdd.macos.spec                    # macOS PyInstaller 配置与应用图标
 |-- AGENTS.md                         # Codex 项目规则与验证命令
 |-- job-editor.bat                    # 源码启动入口
 |-- 界面功能说明.md                    # 当前 Qt 界面的详细操作说明

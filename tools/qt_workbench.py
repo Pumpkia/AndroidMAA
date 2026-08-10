@@ -1,6 +1,7 @@
 """Native Qt desktop workbench for Qdd."""
 
 from __future__ import annotations
+
 import os
 from pathlib import Path
 import subprocess
@@ -42,6 +43,8 @@ def adb_executable():
         if candidate.exists():
             return candidate
     return Path("adb")
+
+
 APP_ICON = ASSETS_DIR / "icons" / "qdd-icon.png"
 
 RECOGNITION_OPTIONS = (("\u6a21\u677f\u5339\u914d", "TemplateMatch"), ("\u6587\u5b57\u8bc6\u522b (OCR)", "OCR"), ("\u76f4\u63a5\u547d\u4e2d", "DirectHit"))
@@ -1439,7 +1442,13 @@ class Workbench(QMainWindow):
             self.device_changed(self.devices.currentText())
             self.message_status.setText("设备列表已刷新")
 
-        self.run_async(self.adb.devices, done)
+        def failed(error):
+            if self.execution_active or generation != self.refresh_generation:
+                return
+            self.message_status.setText("\u8bbe\u5907\u5217\u8868\u5237\u65b0\u5931\u8d25")
+            QMessageBox.critical(self, "\u5237\u65b0\u8bbe\u5907\u5931\u8d25", error)
+
+        self.run_async(self.adb.devices, done, failed)
 
     def device_changed(self, serial):
         changed = serial != self.adb.serial
@@ -1478,8 +1487,14 @@ class Workbench(QMainWindow):
             self.record.viewport.setText(f"\u89c6\u53e3\uff1a{width} \u00d7 {height}")
             self.message_status.setText("\u622a\u56fe\u5b8c\u6210")
 
-        self.run_async(session.screenshot, done)
+        def failed(error):
+            if self.adb.serial != serial:
+                self.message_status.setText("\u8bbe\u5907\u5df2\u5207\u6362\uff0c\u5df2\u4e22\u5f03\u65e7\u622a\u56fe")
+                return
+            self.message_status.setText("\u622a\u56fe\u5931\u8d25")
+            QMessageBox.critical(self, "\u622a\u56fe\u5931\u8d25", error)
 
+        self.run_async(session.screenshot, done, failed)
 
     def new_job(self):
         if self.dirty and QMessageBox.question(self, "\u65b0\u5efa\u7528\u4f8b", "\u5f53\u524d\u4fee\u6539\u5c1a\u672a\u4fdd\u5b58\uff0c\u4ecd\u8981\u65b0\u5efa\u5417\uff1f") != QMessageBox.StandardButton.Yes:
@@ -1555,7 +1570,7 @@ class Workbench(QMainWindow):
         self.update_title()
 
     def update_title(self):
-        self.setWindowTitle(f"Qdd - 自动化用例工作台{' *' if self.dirty else ''}")
+        self.setWindowTitle(f"\u81ea\u52a8\u5316\u7528\u4f8b\u5de5\u4f5c\u53f0{' *' if self.dirty else ''}")
 
     def toast(self, message):
         self.message_status.setText(message)

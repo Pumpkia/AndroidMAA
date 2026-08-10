@@ -27,6 +27,7 @@ from qt_workbench import (
     write_png,
 )
 from job_model import JobDocument, JobStep
+from semantic_navigator import NamedRegion, SemanticMap, UiNode
 
 
 class FakeRunner:
@@ -218,6 +219,10 @@ class VisualSystemTests(unittest.TestCase):
             window = Workbench()
 
         try:
+            self.assertEqual(window.windowTitle(), "\u81ea\u52a8\u5316\u7528\u4f8b\u5de5\u4f5c\u53f0")
+            window.set_dirty(True)
+            self.assertEqual(window.windowTitle(), "\u81ea\u52a8\u5316\u7528\u4f8b\u5de5\u4f5c\u53f0 *")
+            window.set_dirty(False)
             self.assertIsNotNone(window.findChild(QFrame, "modeSwitcher"))
             self.assertIn("#0066CC", window.styleSheet())
             self.assertIn("#modeSwitcher", window.styleSheet())
@@ -494,6 +499,153 @@ class WorkbenchCaptureAndRaceTests(unittest.TestCase):
             window.set_execution_active(True, "semantic")
             active_result(["must-not-replace"])
             self.assertEqual(window.devices.findText("must-not-replace"), -1)
+        finally:
+            self.close_window(window)
+
+    def test_refresh_failure_replaces_pending_status(self):
+        window = self.make_window()
+        callbacks = {}
+        window.run_async = lambda operation, done=None, failed=None: callbacks.update(
+            done=done, failed=failed
+        )
+
+        try:
+            window.refresh_devices()
+            with patch("qt_workbench.QMessageBox.critical") as critical:
+                callbacks["failed"]("ADB unavailable")
+
+            self.assertEqual(window.message_status.text(), "\u8bbe\u5907\u5217\u8868\u5237\u65b0\u5931\u8d25")
+            self.assertNotIn("\u6b63\u5728", window.message_status.text())
+            critical.assert_called_once()
+        finally:
+            self.close_window(window)
+
+    def test_capture_failure_replaces_pending_status(self):
+        window = self.make_window()
+        callbacks = {}
+        window.adb.serial = "device"
+        window.adb.for_serial = lambda _serial: SimpleNamespace(screenshot=lambda: None)
+        window.run_async = lambda operation, done=None, failed=None: callbacks.update(
+            done=done, failed=failed
+        )
+
+        try:
+            window.capture_screen()
+            with patch("qt_workbench.QMessageBox.critical") as critical:
+                callbacks["failed"]("screencap failed")
+
+            self.assertEqual(window.message_status.text(), "\u622a\u56fe\u5931\u8d25")
+            self.assertNotIn("\u6b63\u5728", window.message_status.text())
+            critical.assert_called_once()
+        finally:
+            self.close_window(window)
+
+    def test_semantic_scan_discards_stale_serial_and_checks_delayed_close(self):
+        window = self.make_window()
+        callbacks = {}
+        active = []
+        finished = []
+        window.adb.serial = "first"
+        window.adb.for_serial = lambda _serial: SimpleNamespace()
+        window.set_execution_active = lambda *args: active.append(args)
+        window.finish_close_if_requested = lambda: finished.append(True)
+        window.run_async = lambda operation, done=None, failed=None: callbacks.update(
+            operation=operation, done=done, failed=failed
+        )
+
+        try:
+            window.semantic.scan()
+            window.adb.serial = "second"
+            callbacks["done"]((True, object()))
+
+            self.assertIsNone(window.semantic.snapshot)
+            self.assertEqual(window.semantic.state.text(), "\u8bbe\u5907\u5df2\u5207\u6362")
+            self.assertIn(
+                "\u5df2\u4e22\u5f03\u65e7\u626b\u63cf\u7ed3\u679c",
+                window.semantic.log.toPlainText(),
+            )
+            self.assertEqual(active, [(True, "semantic_scan"), (False,)])
+            self.assertEqual(finished, [True])
+        finally:
+            self.close_window(window)
+
+    def test_semantic_preview_success_checks_delayed_close(self):
+        window = self.make_window()
+        callbacks = {}
+        active = []
+        finished = []
+        toasts = []
+        taps = []
+        window.adb.serial = "device"
+        window.adb.for_serial = lambda _serial: SimpleNamespace(
+            shell=lambda args: taps.append(args)
+        )
+        window.set_execution_active = lambda *args: active.append(args)
+        window.finish_close_if_requested = lambda: finished.append(True)
+        window.toast = toasts.append
+        window.run_async = lambda operation, done=None, failed=None: callbacks.update(
+            operation=operation, done=done, failed=failed
+        )
+        window.semantic.snapshot_serial = "device"
+        window.semantic.nodes = [UiNode(
+            text="\u767b\u5f55",
+            content_desc="",
+            resource_id="",
+            class_name="android.view.View",
+            bounds=(100, 200, 300, 260),
+            clickable=True,
+            action_bounds=(80, 180, 320, 300),
+        )]
+        window.semantic.populate_nodes()
+        window.semantic.scan_table.setCurrentCell(0, 0)
+
+        try:
+            window.semantic.preview_selected_node()
+            callbacks["done"](callbacks["operation"]())
+
+            self.assertEqual(taps, [["input", "tap", "200", "240"]])
+            self.assertEqual(window.semantic.state.text(), "\u5df2\u8bd5\u70b9")
+            self.assertEqual(active, [(True, "semantic_preview"), (False,)])
+            self.assertEqual(finished, [True])
+            self.assertEqual(toasts, ["\u5df2\u8bd5\u70b9\uff1a\u767b\u5f55"])
+        finally:
+            self.close_window(window)
+
+    def test_semantic_execute_failure_checks_delayed_close(self):
+        window = self.make_window()
+        callbacks = {}
+        active = []
+        finished = []
+        window.adb.serial = "device"
+        window.adb.for_serial = lambda _serial: SimpleNamespace()
+        window.set_execution_active = lambda *args: active.append(args)
+        window.finish_close_if_requested = lambda: finished.append(True)
+        window.run_async = lambda operation, done=None, failed=None: callbacks.update(
+            operation=operation, done=done, failed=failed
+        )
+        window.semantic.semantic_map = SemanticMap([
+            NamedRegion(
+                "login", "\u767b\u5f55\u9875", "\u767b\u5f55",
+                action="click", text="\u767b\u5f55",
+                bounds_ratio=[.4, .2, .6, .25],
+                action_bounds_ratio=[.25, .15, .75, .3],
+            ),
+        ])
+        window.semantic.command.setText("\u70b9\u51fb\u767b\u5f55")
+
+        try:
+            window.semantic.execute_command()
+            with patch("semantic_navigator.QMessageBox.warning") as warning:
+                callbacks["done"]((False, "\u8bc6\u522b\u5931\u8d25"))
+
+            self.assertEqual(window.semantic.state.text(), "\u5931\u8d25")
+            self.assertIn(
+                "\u5931\u8d25\uff1a\u8bc6\u522b\u5931\u8d25",
+                window.semantic.log.toPlainText(),
+            )
+            self.assertEqual(active, [(True, "semantic"), (False,)])
+            self.assertEqual(finished, [True])
+            warning.assert_called_once()
         finally:
             self.close_window(window)
 

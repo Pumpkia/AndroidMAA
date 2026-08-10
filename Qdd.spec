@@ -34,6 +34,7 @@ exe = EXE(
     exclude_binaries=True,
     name='Qdd',
     icon='assets\\icons\\qdd.ico',
+    version='assets\\windows_version_info.txt',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
