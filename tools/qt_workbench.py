@@ -1,4 +1,4 @@
-"""Native Qt desktop workbench for MaaQQLogin."""
+"""Native Qt desktop workbench for Qdd."""
 
 from __future__ import annotations
 import os
@@ -7,12 +7,13 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime
 
 import cv2
 import numpy as np
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QThread, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
     QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
@@ -41,9 +42,66 @@ def adb_executable():
         if candidate.exists():
             return candidate
     return Path("adb")
+APP_ICON = ASSETS_DIR / "icons" / "qdd-icon.png"
 
 RECOGNITION_OPTIONS = (("\u6a21\u677f\u5339\u914d", "TemplateMatch"), ("\u6587\u5b57\u8bc6\u522b (OCR)", "OCR"), ("\u76f4\u63a5\u547d\u4e2d", "DirectHit"))
 ACTION_OPTIONS = (("\u70b9\u51fb", "Click"), ("\u8f93\u5165\u6587\u672c", "InputText"), ("\u6ed1\u52a8", "Swipe"), ("\u6309\u952e", "ClickKey"), ("\u7b49\u5f85", "DoNothing"))
+SEMANTIC_PURPOSE_LABELS = {
+    "click": "\u8bed\u4e49\u70b9\u51fb",
+    "check": "\u8bed\u4e49\u68c0\u67e5",
+    "recognize": "\u8bed\u4e49\u8bc6\u522b",
+}
+
+
+@dataclass(frozen=True)
+class RecordingGeometry:
+    physical_size: tuple[int, int]
+    normalized_size: tuple[int, int]
+
+    @property
+    def scale_to_physical(self):
+        physical_width, physical_height = self.physical_size
+        normalized_width, normalized_height = self.normalized_size
+        return (
+            physical_width / normalized_width,
+            physical_height / normalized_height,
+        )
+
+
+def normalize_recording_image(image, short_side=720):
+    if image is None or image.ndim < 2:
+        raise ValueError("Recording image is required")
+    if short_side <= 0:
+        raise ValueError("Recording short side must be positive")
+    physical_height, physical_width = image.shape[:2]
+    if physical_width <= 0 or physical_height <= 0:
+        raise ValueError("Recording image dimensions must be positive")
+    factor = short_side / min(physical_width, physical_height)
+    normalized_width = max(1, round(physical_width * factor))
+    normalized_height = max(1, round(physical_height * factor))
+    if (normalized_width, normalized_height) == (physical_width, physical_height):
+        normalized = image.copy()
+    else:
+        interpolation = cv2.INTER_AREA if factor < 1 else cv2.INTER_LINEAR
+        normalized = cv2.resize(
+            image,
+            (normalized_width, normalized_height),
+            interpolation=interpolation,
+        )
+    geometry = RecordingGeometry(
+        (physical_width, physical_height),
+        (normalized_width, normalized_height),
+    )
+    return normalized, geometry
+
+
+def click_target_point(target):
+    if len(target) == 2:
+        return target[0], target[1]
+    if len(target) == 4:
+        x, y, width, height = target
+        return x + width // 2, y + height // 2
+    raise ValueError("点击目标必须是坐标 [x, y] 或区域 [x, y, width, height]")
 
 
 def run_job_with_retry(runner, document, serial, emit, retry, should_stop=None):
@@ -61,6 +119,75 @@ def run_job_with_retry(runner, document, serial, emit, retry, should_stop=None):
         if attempt + 1 < attempts:
             emit("首次执行失败，正在重试一次")
     return False
+
+
+@dataclass(frozen=True)
+class PlaybackResult:
+    succeeded: int
+    total: int
+    failed_index: int | None = None
+    stopped: bool = False
+
+
+def run_playback_queue(
+    queue,
+    serial,
+    runner,
+    emit,
+    retry,
+    should_stop,
+    set_status,
+    set_progress,
+    load_document=JobDocument.load,
+    capture_failure=None,
+):
+    total = len(queue)
+    succeeded = 0
+
+    def skip_remaining(start):
+        for row in range(start, total):
+            set_status(row, "已跳过")
+
+    for index, path in enumerate(queue):
+        if should_stop():
+            skip_remaining(index)
+            return PlaybackResult(succeeded, total, stopped=True)
+
+        set_status(index, "执行中")
+        emit(f"开始用例：{path.name}")
+        try:
+            document = load_document(path)
+            ok = run_job_with_retry(
+                runner,
+                document,
+                serial,
+                emit,
+                retry,
+                should_stop,
+            )
+        except Exception as error:
+            emit(f"用例异常：{error}")
+            ok = False
+
+        if not ok:
+            if should_stop():
+                set_status(index, "已停止")
+                skip_remaining(index + 1)
+                return PlaybackResult(succeeded, total, stopped=True)
+            if capture_failure is not None:
+                capture_failure(path)
+            emit("用例失败")
+            set_status(index, "失败")
+            skip_remaining(index + 1)
+            set_progress(round((index + 1) / total * 100))
+            return PlaybackResult(succeeded, total, failed_index=index)
+
+        succeeded += 1
+        emit("用例完成")
+        set_status(index, "已完成")
+        set_progress(round((index + 1) / total * 100))
+
+    return PlaybackResult(succeeded, total)
 
 
 def icon(widget, name):
@@ -95,6 +222,35 @@ class Worker(QThread):
 class AdbClient:
     def __init__(self):
         self.serial = ""
+        self.recording_geometry = None
+
+    def for_serial(self, serial):
+        if not serial:
+            raise ValueError("ADB serial is required")
+        client = AdbClient()
+        client.serial = serial
+        client.recording_geometry = self.recording_geometry
+        return client
+
+    def clear_recording_geometry(self):
+        self.recording_geometry = None
+
+    def recording_point_to_physical(self, point):
+        if self.recording_geometry is None:
+            return round(point[0]), round(point[1])
+        scale_x, scale_y = self.recording_geometry.scale_to_physical
+        return round(point[0] * scale_x), round(point[1] * scale_y)
+
+    def semantic_target_to_physical(self, step):
+        target_ratio = getattr(step, "target_ratio", None)
+        if not target_ratio or self.recording_geometry is None:
+            return None
+        left, top, right, bottom = target_ratio
+        width, height = self.recording_geometry.physical_size
+        return (
+            round((left + right) * width / 2),
+            round((top + bottom) * height / 2),
+        )
 
     def run(self, args, timeout=20):
         executable = adb_executable()
@@ -131,9 +287,21 @@ class AdbClient:
         if step.pre_delay:
             time.sleep(step.pre_delay / 1000)
         if step.action == "Click" and step.target:
-            self.shell(["input", "tap", *map(str, step.target)])
+            point = None
+            if getattr(step, "semantic_purpose", "") == "click":
+                point = self.semantic_target_to_physical(step)
+            if point is None:
+                point = self.recording_point_to_physical(
+                    click_target_point(step.target)
+                )
+            x, y = point
+            self.shell(["input", "tap", str(x), str(y)])
         elif step.action == "Swipe" and step.target and step.swipe_end:
-            self.shell(["input", "swipe", *map(str, [*step.target, *step.swipe_end, step.duration])])
+            begin = self.recording_point_to_physical(step.target)
+            end = self.recording_point_to_physical(step.swipe_end)
+            self.shell([
+                "input", "swipe", *map(str, [*begin, *end, step.duration])
+            ])
         elif step.action == "InputText":
             self.shell(["input", "text", step.input_text.replace(" ", "%s")])
         elif step.action == "ClickKey":
@@ -170,7 +338,7 @@ class PhonePreview(QWidget):
         self.setMinimumWidth(310)
 
     def set_image(self, image):
-        self.pixmap = to_pixmap(image)
+        self.pixmap = to_pixmap(image) if image is not None else None
         self.update()
 
     def paintEvent(self, _event):
@@ -214,6 +382,11 @@ class Canvas(QWidget):
         self.setMinimumWidth(390)
 
     def set_image(self, image):
+        if image is None:
+            self.pixmap = None
+            self.source_size = QSize(720, 1600)
+            self.clear_marks()
+            return
         self.pixmap = to_pixmap(image)
         self.source_size = QSize(image.shape[1], image.shape[0])
         self.update()
@@ -426,6 +599,8 @@ class RecordPage(QWidget):
         form.setContentsMargins(18, 10, 18, 8)
         form.setHorizontalSpacing(12)
         form.setVerticalSpacing(9)
+        self.purpose_info = QLabel("\u666e\u901a\u6b65\u9aa4")
+        self.purpose_info.setObjectName("selectionInfo")
         self.name = QLineEdit("步骤 1")
         self.recognition = QComboBox()
         for label, value in RECOGNITION_OPTIONS:
@@ -456,6 +631,7 @@ class RecordPage(QWidget):
         for widget in (self.roi_info, self.target_info):
             widget.setObjectName("muted")
         fields = (
+            ("\u7528\u9014", self.purpose_info),
             ("名称", self.name), ("识别", self.recognition), ("动作", self.action),
             ("OCR 文字", self.expected), ("输入内容", self.input_text),
             ("匹配阈值", threshold_host), ("按键码", self.key),
@@ -518,7 +694,7 @@ class RecordPage(QWidget):
             self.target_info.setText(f"{value[0]} → {value[1]}")
             self.selection_info.setText(f"滑动轨迹：{value[0]} → {value[1]}")
 
-    def make_step(self, template=""):
+    def make_step(self, template="", semantic_purpose=""):
         if self.recognition.currentData() == "TemplateMatch" and self.canvas.roi and self.app.screen_image is not None:
             x, y, width, height = self.canvas.roi
             crop = self.app.screen_image[y:y + height, x:x + width]
@@ -529,6 +705,7 @@ class RecordPage(QWidget):
                 template = relative.as_posix()
         return JobStep(
             name=self.name.text().strip() or "新步骤",
+            semantic_purpose=semantic_purpose,
             recognition=self.recognition.currentData(), action=self.action.currentData(),
             template=template, roi=self.canvas.roi, expected=self.expected.text(),
             threshold=self.threshold.value() / 100, target=self.canvas.target,
@@ -551,7 +728,8 @@ class RecordPage(QWidget):
         if row < 0:
             QMessageBox.information(self, "步骤属性", "请先选择需要修改的步骤。")
             return
-        step = self.make_step(self.app.document.steps[row].template)
+        original = self.app.document.steps[row]
+        step = self.make_step(original.template, original.semantic_purpose)
         if not self.validate_step(step):
             return
         self.app.document.steps[row] = step
@@ -578,17 +756,29 @@ class RecordPage(QWidget):
         self.steps.blockSignals(True)
         self.steps.setRowCount(len(self.app.document.steps))
         for row, step in enumerate(self.app.document.steps):
+            purpose = SEMANTIC_PURPOSE_LABELS.get(step.semantic_purpose)
             for column, value in enumerate((f"{row + 1:02d}", step.name, names.get(step.action, step.action), "就绪")):
                 self.steps.setItem(row, column, QTableWidgetItem(value))
+            if purpose:
+                self.steps.item(row, 2).setText(purpose)
         self.steps.blockSignals(False)
         if 0 <= select < self.steps.rowCount():
             self.steps.selectRow(select)
+        else:
+            self.purpose_info.setText("\u666e\u901a\u6b65\u9aa4")
+            self.recognition.setEnabled(True)
+            self.action.setEnabled(True)
 
     def load_selected(self):
         row = self.steps.currentRow()
         if not 0 <= row < len(self.app.document.steps):
             return
         step = self.app.document.steps[row]
+        purpose = SEMANTIC_PURPOSE_LABELS.get(step.semantic_purpose)
+        self.purpose_info.setText(purpose or "\u666e\u901a\u6b65\u9aa4")
+        editable = not step.semantic_purpose
+        self.recognition.setEnabled(editable)
+        self.action.setEnabled(editable)
         self.name.setText(step.name)
         self.recognition.setCurrentIndex(max(0, self.recognition.findData(step.recognition)))
         self.action.setCurrentIndex(max(0, self.action.findData(step.action)))
@@ -612,7 +802,21 @@ class RecordPage(QWidget):
         step = self.app.document.steps[row] if 0 <= row < len(self.app.document.steps) else self.make_step()
         if not self.validate_step(step):
             return
-        self.app.run_async(lambda: self.app.adb.execute(step), lambda _value: self.app.toast(f"已在设备上执行：{step.name}"))
+        serial = self.app.adb.serial
+        session = self.app.adb.for_serial(serial)
+        self.app.set_execution_active(True, "record_preview")
+
+        def done(_value):
+            self.app.set_execution_active(False)
+            self.app.toast(f"\u5df2\u5728\u8bbe\u5907\u4e0a\u6267\u884c\uff1a{step.name}")
+            self.app.finish_close_if_requested()
+
+        def failed(error):
+            self.app.set_execution_active(False)
+            QMessageBox.critical(self, "\u52a8\u4f5c\u9884\u89c8\u5931\u8d25", error)
+            self.app.finish_close_if_requested()
+
+        self.app.run_async(lambda: session.execute(step), done, failed)
 
     def validate_step(self, step):
         errors = step.validate()
@@ -905,34 +1109,28 @@ class PlaybackPage(QWidget):
         self.set_state("执行中", "running")
         self.progress.setValue(1)
         queue, serial = list(self.queue), self.app.adb.serial
+        session = self.app.adb.for_serial(serial)
         retry_failed = self.retry.isChecked()
         capture_failure = self.capture_error.isChecked()
 
         def operation():
-            succeeded = 0
-            for index, path in enumerate(queue):
-                if self.stop_requested:
-                    break
-                self.app.call_ui(lambda row=index: self.set_queue_status(row, "执行中"))
-                self.log_signal.emit(f"开始用例：{path.name}")
-                document = JobDocument.load(path)
-                ok = run_job_with_retry(
-                    self.runner,
-                    document,
-                    serial,
-                    self.log_signal.emit,
-                    retry_failed,
-                    lambda: self.stop_requested,
-                )
-                if not ok and capture_failure and not self.stop_requested:
-                    self.capture_failure_screen(path)
-                succeeded += int(ok)
-                self.log_signal.emit("用例完成" if ok else "用例失败")
-                status = "已完成" if ok else "失败"
-                self.app.call_ui(lambda row=index, value=status: self.set_queue_status(row, value))
-                value = round((index + 1) / len(queue) * 100)
-                self.app.call_ui(lambda current=value: self.progress.setValue(current))
-            return succeeded
+            return run_playback_queue(
+                queue,
+                serial,
+                self.runner,
+                self.log_signal.emit,
+                retry_failed,
+                lambda: self.stop_requested,
+                lambda row, status: self.app.call_ui(
+                    lambda current_row=row, value=status: self.set_queue_status(current_row, value)
+                ),
+                lambda value: self.app.call_ui(
+                    lambda current=value: self.progress.setValue(current)
+                ),
+                capture_failure=(
+                    lambda path: self.capture_failure_screen(path, session)
+                ) if capture_failure else None,
+            )
 
         worker = Worker(operation)
         worker.done.connect(self.execution_finished)
@@ -945,9 +1143,9 @@ class PlaybackPage(QWidget):
         self.stop.setEnabled(False)
         threading.Thread(target=lambda: self.runner.stop(self.log_signal.emit), daemon=True).start()
 
-    def capture_failure_screen(self, job_path):
+    def capture_failure_screen(self, job_path, session):
         try:
-            image = self.app.adb.screenshot()
+            image = session.screenshot()
             output_dir = APP_DIR / "logs" / "failures"
             output_dir.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -958,11 +1156,15 @@ class PlaybackPage(QWidget):
         except Exception as error:
             self.log_signal.emit(f"失败截图保存失败：{error}")
 
-    def execution_finished(self, count):
+    def execution_finished(self, result):
         self.set_execution_active(False)
-        state = "stopped" if self.stop_requested else "success"
-        self.set_state("已停止" if self.stop_requested else "已完成", state)
-        self.append_log(f"执行结束：成功 {count} / {len(self.queue)}")
+        if result.stopped:
+            self.set_state("已停止", "stopped")
+        elif result.failed_index is not None:
+            self.set_state("失败", "failed")
+        else:
+            self.set_state("已完成", "success")
+        self.append_log(f"执行结束：成功 {result.succeeded} / {result.total}")
         self.app.finish_close_if_requested()
 
     def execution_failed(self, error):
@@ -983,6 +1185,7 @@ class Workbench(QMainWindow):
         self.current_path = None
         self.screen_image = None
         self.workers = []
+        self.refresh_generation = 0
         self.dirty = False
         self.execution_active = False
         self.execution_source = ""
@@ -1018,10 +1221,10 @@ class Workbench(QMainWindow):
         bar.setObjectName("topBar")
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(24, 10, 18, 10)
-        mark = QLabel("M")
+        mark = QLabel("Q")
         mark.setObjectName("brandMark")
         layout.addWidget(mark)
-        brand = QLabel("MaaQQLogin")
+        brand = QLabel("Qdd")
         brand.setObjectName("brand")
         layout.addWidget(brand)
         layout.addSpacing(20)
@@ -1168,6 +1371,8 @@ class Workbench(QMainWindow):
             self.idle_shortcuts.append(shortcut)
 
     def set_execution_active(self, active, source="playback"):
+        if active:
+            self.refresh_generation += 1
         self.execution_active = active
         self.execution_source = source if active else ""
         self.record_button.setEnabled(not active)
@@ -1193,23 +1398,38 @@ class Workbench(QMainWindow):
 
     def keep_worker(self, worker):
         self.workers.append(worker)
-        worker.finished.connect(lambda: self.workers.remove(worker) if worker in self.workers else None)
 
-    def run_async(self, operation, done=None):
+        def finished():
+            if worker in self.workers:
+                self.workers.remove(worker)
+            self.finish_close_if_requested()
+
+        worker.finished.connect(finished)
+
+    def run_async(self, operation, done=None, failed=None):
         worker = Worker(operation)
         self.keep_worker(worker)
         if done:
             worker.done.connect(done)
-        worker.failed.connect(lambda error: QMessageBox.critical(self, "操作失败", error))
+        if failed:
+            worker.failed.connect(failed)
+        else:
+            worker.failed.connect(
+                lambda error: QMessageBox.critical(self, "操作失败", error)
+            )
         worker.start()
 
     def call_ui(self, callback):
         self.ui_call.emit(callback)
 
     def refresh_devices(self):
+        self.refresh_generation += 1
+        generation = self.refresh_generation
         self.message_status.setText("正在刷新 ADB 设备...")
 
         def done(devices):
+            if self.execution_active or generation != self.refresh_generation:
+                return
             current = self.devices.currentText()
             self.devices.blockSignals(True)
             self.devices.clear()
@@ -1222,7 +1442,14 @@ class Workbench(QMainWindow):
         self.run_async(self.adb.devices, done)
 
     def device_changed(self, serial):
+        changed = serial != self.adb.serial
         self.adb.serial = serial
+        if changed:
+            self.adb.clear_recording_geometry()
+            self.screen_image = None
+            self.record.canvas.set_image(None)
+            self.record.device.phone.set_image(None)
+            self.playback.device.phone.set_image(None)
         self.semantic.device_changed(serial)
         connected = bool(serial)
         self.adb_status.setText(f"●  ADB：{'已连接' if connected else '未连接'}")
@@ -1232,18 +1459,27 @@ class Workbench(QMainWindow):
         if not self.adb.serial:
             QMessageBox.warning(self, "ADB 设备", "未检测到可用设备，请连接设备并刷新。")
             return
+        serial = self.adb.serial
+        session = self.adb.for_serial(serial)
         self.message_status.setText("正在获取设备截图...")
 
         def done(image):
-            self.screen_image = image
-            self.record.canvas.set_image(image)
-            self.record.device.phone.set_image(image)
-            self.playback.device.phone.set_image(image)
-            self.document.device_size = [image.shape[1], image.shape[0]]
-            self.record.viewport.setText(f"视口：{image.shape[1]} × {image.shape[0]}")
-            self.message_status.setText("截图完成")
+            if self.adb.serial != serial:
+                self.message_status.setText("\u8bbe\u5907\u5df2\u5207\u6362\uff0c\u5df2\u4e22\u5f03\u65e7\u622a\u56fe")
+                return
+            normalized, geometry = normalize_recording_image(image)
+            self.adb.recording_geometry = geometry
+            self.screen_image = normalized
+            self.record.canvas.set_image(normalized)
+            self.record.device.phone.set_image(normalized)
+            self.playback.device.phone.set_image(normalized)
+            width, height = geometry.normalized_size
+            self.document.device_size = [width, height]
+            self.record.viewport.setText(f"\u89c6\u53e3\uff1a{width} \u00d7 {height}")
+            self.message_status.setText("\u622a\u56fe\u5b8c\u6210")
 
-        self.run_async(self.adb.screenshot, done)
+        self.run_async(session.screenshot, done)
+
 
     def new_job(self):
         if self.dirty and QMessageBox.question(self, "\u65b0\u5efa\u7528\u4f8b", "\u5f53\u524d\u4fee\u6539\u5c1a\u672a\u4fdd\u5b58\uff0c\u4ecd\u8981\u65b0\u5efa\u5417\uff1f") != QMessageBox.StandardButton.Yes:
@@ -1319,30 +1555,34 @@ class Workbench(QMainWindow):
         self.update_title()
 
     def update_title(self):
-        self.setWindowTitle(f"MaaQQLogin - 自动化用例工作台{' *' if self.dirty else ''}")
+        self.setWindowTitle(f"Qdd - 自动化用例工作台{' *' if self.dirty else ''}")
 
     def toast(self, message):
         self.message_status.setText(message)
 
     def finish_close_if_requested(self):
-        if self.close_when_idle:
+        workers_running = any(worker.isRunning() for worker in self.workers)
+        if self.close_when_idle and not self.execution_active and not workers_running:
             self.close()
 
     def closeEvent(self, event):
-        if self.close_when_idle and not self.execution_active:
+        workers_running = any(worker.isRunning() for worker in self.workers)
+        if self.close_when_idle and not self.execution_active and not workers_running:
             self.close_when_idle = False
             event.accept()
             return
         if self.dirty and QMessageBox.question(self, "退出", "当前修改尚未保存，确认退出吗？") != QMessageBox.StandardButton.Yes:
             event.ignore()
             return
-        if self.execution_active:
+        if self.execution_active or workers_running:
             self.close_when_idle = True
-            if self.execution_source == "playback":
+            if self.execution_active and self.execution_source == "playback":
                 self.message_status.setText("正在停止任务，停止后自动退出...")
                 self.playback.stop_execution()
+            elif self.execution_active:
+                self.message_status.setText("正在等待当前操作完成，完成后自动退出...")
             else:
-                self.message_status.setText("正在等待语义操作完成，完成后自动退出...")
+                self.message_status.setText("正在等待后台操作完成，完成后自动退出...")
             event.ignore()
             return
         event.accept()
@@ -1351,7 +1591,10 @@ class Workbench(QMainWindow):
 def main():
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     application = QApplication(sys.argv)
-    application.setApplicationName("MaaQQLogin")
+    application.setApplicationName("Qdd")
+    application.setApplicationDisplayName("Qdd")
+    if APP_ICON.is_file():
+        application.setWindowIcon(QIcon(str(APP_ICON)))
     application.setStyle("Fusion")
     window = Workbench()
     window.show()

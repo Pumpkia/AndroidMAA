@@ -57,6 +57,22 @@ class EditorContextSink(ContextEventSink):
             self.emit(format_event(message, details))
 
 
+MAA_COORDINATE_SHORT_SIDE = 720
+
+
+def controller_runtime_device_size(controller) -> list[int]:
+    if not controller.set_screenshot_target_short_side(MAA_COORDINATE_SHORT_SIDE):
+        raise RuntimeError("Failed to configure Maa screenshot coordinate size")
+    screenshot_job = controller.post_screencap().wait()
+    if not screenshot_job.succeeded:
+        raise RuntimeError("Failed to capture the target device screen")
+    image = screenshot_job.get()
+    shape = getattr(image, "shape", ())
+    if len(shape) < 2 or int(shape[0]) <= 0 or int(shape[1]) <= 0:
+        raise RuntimeError("Maa returned an invalid target device screenshot")
+    return [int(shape[1]), int(shape[0])]
+
+
 class MaaJobRunner:
     def __init__(self, app_dir: Path, assets_dir: Path, jobs_dir: Path) -> None:
         self.app_dir = app_dir
@@ -103,13 +119,19 @@ class MaaJobRunner:
             raise RuntimeError("Maa ADB 控制器连接失败")
 
         emit("加载识别资源与模板")
+        runtime_device_size = controller_runtime_device_size(controller)
+        emit(f"Maa coordinates: {runtime_device_size[0]} x {runtime_device_size[1]}")
+
         resource = Resource()
         resource_job = resource.post_bundle(self.assets_dir / "resource").wait()
         if not resource_job.succeeded:
             raise RuntimeError("Maa 资源加载失败")
 
         prerequisites = document.resolve_prerequisites(self.jobs_dir) if document.prerequisites else []
-        pipeline = document.to_pipeline(prerequisites)
+        pipeline = document.to_pipeline(
+            prerequisites,
+            runtime_device_size=runtime_device_size,
+        )
         entry = safe_name(document.name, "QQJob")
 
         tasker = Tasker()

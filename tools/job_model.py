@@ -9,10 +9,72 @@ import re
 from typing import Any
 
 
-JOB_FORMAT_VERSION = 2
-SUPPORTED_FORMAT_VERSIONS = {1, JOB_FORMAT_VERSION}
+JOB_FORMAT_VERSION = 3
+SUPPORTED_FORMAT_VERSIONS = {1, 2, JOB_FORMAT_VERSION}
 SUPPORTED_RECOGNITIONS = {"DirectHit", "TemplateMatch", "OCR"}
 SUPPORTED_ACTIONS = {"Click", "Swipe", "InputText", "ClickKey", "DoNothing"}
+SUPPORTED_SEMANTIC_PURPOSES = {"click", "check", "recognize"}
+
+
+def _is_rectangle(value: list[int] | None) -> bool:
+    return bool(
+        value
+        and len(value) == 4
+        and all(isinstance(item, int) for item in value)
+        and value[0] >= 0
+        and value[1] >= 0
+        and value[2] > 0
+        and value[3] > 0
+    )
+
+
+def _is_ratio_rectangle(value: list[float] | None) -> bool:
+    return bool(
+        value
+        and len(value) == 4
+        and all(isinstance(item, (int, float)) for item in value)
+        and all(0 <= float(item) <= 1 for item in value)
+        and float(value[0]) < float(value[2])
+        and float(value[1]) < float(value[3])
+    )
+
+
+def _is_device_size(value: list[int] | None) -> bool:
+    return bool(
+        value
+        and len(value) == 2
+        and all(isinstance(item, int) and item > 0 for item in value)
+    )
+
+
+def ratio_to_rect(ratio: list[float], device_size: list[int]) -> list[int]:
+    if not _is_ratio_rectangle(ratio):
+        raise ValueError(
+            "Normalized bounds must be [left, top, right, bottom] within 0..1"
+        )
+    if not _is_device_size(device_size):
+        raise ValueError("Device size must be [width, height] with positive values")
+    width, height = device_size
+    left = min(width - 1, max(0, round(float(ratio[0]) * width)))
+    top = min(height - 1, max(0, round(float(ratio[1]) * height)))
+    right = min(width, max(left + 1, round(float(ratio[2]) * width)))
+    bottom = min(height, max(top + 1, round(float(ratio[3]) * height)))
+    return [left, top, right - left, bottom - top]
+
+
+def rect_to_ratio(rect: list[int], device_size: list[int]) -> list[float]:
+    if not _is_rectangle(rect):
+        raise ValueError("Bounds must be [x, y, width, height] with positive size")
+    if not _is_device_size(device_size):
+        raise ValueError("Device size must be [width, height] with positive values")
+    width, height = device_size
+    x, y, rect_width, rect_height = rect
+    return [
+        round(x / width, 6),
+        round(y / height, 6),
+        round((x + rect_width) / width, 6),
+        round((y + rect_height) / height, 6),
+    ]
 
 
 def safe_name(value: str, fallback: str = "job") -> str:
@@ -60,6 +122,9 @@ class JobStep:
     duration: int = 300
     pre_delay: int = 0
     post_delay: int = 500
+    semantic_purpose: str = ""
+    roi_ratio: list[float] | None = None
+    target_ratio: list[float] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "JobStep":
@@ -74,6 +139,31 @@ class JobStep:
             errors.append(f"不支持的识别类型: {self.recognition}")
         if self.action not in SUPPORTED_ACTIONS:
             errors.append(f"不支持的动作类型: {self.action}")
+        if self.semantic_purpose and self.semantic_purpose not in SUPPORTED_SEMANTIC_PURPOSES:
+            errors.append(
+                f"不支持的语义用途: {self.semantic_purpose}，"
+                "仅支持 click、check、recognize"
+            )
+        elif self.semantic_purpose:
+            if self.recognition != "OCR":
+                errors.append("语义步骤必须使用 OCR 识别")
+            if not _is_rectangle(self.roi):
+                errors.append("语义步骤必须包含 [x, y, 宽, 高] 格式的识别区域")
+            if self.semantic_purpose == "click":
+                if self.action != "Click":
+                    errors.append("click 语义用途必须使用 Click 动作")
+                if not _is_rectangle(self.target):
+                    errors.append("click 语义用途必须包含 [x, y, 宽, 高] 格式的点击区域")
+            elif self.action != "DoNothing":
+                errors.append(f"{self.semantic_purpose} 语义用途必须使用 DoNothing 动作")
+        if self.roi_ratio is not None and not _is_ratio_rectangle(self.roi_ratio):
+            errors.append(
+                "roi_ratio must be [left, top, right, bottom] within 0..1"
+            )
+        if self.target_ratio is not None and not _is_ratio_rectangle(self.target_ratio):
+            errors.append(
+                "target_ratio must be [left, top, right, bottom] within 0..1"
+            )
         if self.recognition == "TemplateMatch" and not self.template:
             errors.append("模板匹配步骤必须包含模板图片")
         if self.recognition == "OCR" and not self.expected.strip():
@@ -90,10 +180,38 @@ class JobStep:
             errors.append("持续时间和步骤延迟不能为负数")
         return errors
 
-    def to_pipeline_node(self, next_name: str | None) -> dict[str, Any]:
+    def to_pipeline_node(
+        self,
+        next_name: str | None,
+        runtime_device_size: list[int] | None = None,
+        source_device_size: list[int] | None = None,
+    ) -> dict[str, Any]:
+        roi = self.roi
+        target = self.target
+        if self.semantic_purpose and runtime_device_size is not None:
+            roi_ratio = self.roi_ratio
+            if (
+                roi_ratio is None
+                and roi is not None
+                and _is_device_size(source_device_size)
+            ):
+                roi_ratio = rect_to_ratio(roi, source_device_size)
+            if roi_ratio is not None:
+                roi = ratio_to_rect(roi_ratio, runtime_device_size)
+
+            target_ratio = self.target_ratio
+            if (
+                target_ratio is None
+                and target is not None
+                and _is_device_size(source_device_size)
+            ):
+                target_ratio = rect_to_ratio(target, source_device_size)
+            if target_ratio is not None:
+                target = ratio_to_rect(target_ratio, runtime_device_size)
+
         node: dict[str, Any] = {"recognition": self.recognition}
-        if self.roi:
-            node["roi"] = self.roi
+        if roi:
+            node["roi"] = roi
         if self.recognition == "TemplateMatch":
             node["template"] = self.template
             node["threshold"] = self.threshold
@@ -101,8 +219,8 @@ class JobStep:
             node["expected"] = self.expected
 
         node["action"] = self.action
-        if self.action == "Click" and self.target:
-            node["target"] = self.target
+        if self.action == "Click" and target:
+            node["target"] = target
         elif self.action == "Swipe":
             node["begin"] = self.target
             node["end"] = self.swipe_end
@@ -201,7 +319,14 @@ class JobDocument:
             visit(reference)
         return resolved
 
-    def to_pipeline(self, prerequisite_documents: list["JobDocument"] | None = None) -> dict[str, Any]:
+    def to_pipeline(
+        self,
+        prerequisite_documents: list["JobDocument"] | None = None,
+        runtime_device_size: list[int] | None = None,
+    ) -> dict[str, Any]:
+        if runtime_device_size is not None and not _is_device_size(runtime_device_size):
+            raise ValueError("Runtime device size must contain positive width and height")
+
         documents = [*(prerequisite_documents or []), self]
         all_errors: list[str] = []
         for document in documents:
@@ -210,7 +335,7 @@ class JobDocument:
             raise ValueError("\n".join(all_errors))
 
         entry_name = safe_name(self.name, "QQJob")
-        named_steps: list[tuple[str, JobStep]] = []
+        named_steps: list[tuple[str, JobStep, list[int]]] = []
         names = {entry_name}
         for document in documents:
             prefix = "" if document is self else f"{safe_name(document.name)}__"
@@ -219,7 +344,7 @@ class JobDocument:
                 if node_name in names:
                     raise ValueError(f"导出节点名称冲突: {node_name}")
                 names.add(node_name)
-                named_steps.append((node_name, step))
+                named_steps.append((node_name, step, document.device_size))
 
         pipeline: dict[str, Any] = {
             entry_name: {
@@ -228,9 +353,13 @@ class JobDocument:
                 "next": [named_steps[0][0]] if named_steps else [],
             }
         }
-        for index, (node_name, step) in enumerate(named_steps):
+        for index, (node_name, step, source_device_size) in enumerate(named_steps):
             next_name = named_steps[index + 1][0] if index + 1 < len(named_steps) else None
-            pipeline[node_name] = step.to_pipeline_node(next_name)
+            pipeline[node_name] = step.to_pipeline_node(
+                next_name,
+                runtime_device_size=runtime_device_size,
+                source_device_size=source_device_size,
+            )
         return pipeline
 
     def export_pipeline(self, path: Path, jobs_dir: Path | None = None) -> None:

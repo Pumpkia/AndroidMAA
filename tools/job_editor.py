@@ -146,7 +146,7 @@ class AdbClient:
 class JobEditor(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("MaaQQLogin - 自动化作业工作台")
+        self.title("Qdd - 自动化作业工作台")
         self.geometry("1600x940")
         self.minsize(1320, 800)
 
@@ -248,7 +248,7 @@ class JobEditor(tk.Tk):
 
         brand = tk.Frame(header, background=COLOR_HEADER)
         brand.pack(side=tk.LEFT, padx=(18, 24), fill=tk.Y)
-        tk.Label(brand, text="MaaQQLogin", background=COLOR_HEADER, foreground=COLOR_TEXT, font=("Microsoft YaHei UI", 13, "bold")).pack(anchor=tk.W, pady=(9, 0))
+        tk.Label(brand, text="Qdd", background=COLOR_HEADER, foreground=COLOR_TEXT, font=("Microsoft YaHei UI", 13, "bold")).pack(anchor=tk.W, pady=(9, 0))
         tk.Label(brand, text="自动化作业工作台", background=COLOR_HEADER, foreground=COLOR_MUTED, font=("Microsoft YaHei UI", 8)).pack(anchor=tk.W)
 
         mode_group = tk.Frame(header, background="#E8E8ED", padx=3, pady=3)

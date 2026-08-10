@@ -6,10 +6,213 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from job_model import JobDocument, JobStep, safe_name, suggest_category
+from job_model import (
+    JOB_FORMAT_VERSION, JobDocument, JobStep, safe_name, suggest_category,
+)
 
 
 class JobModelTests(unittest.TestCase):
+    def test_semantic_steps_round_trip_and_export_ocr_pipeline(self):
+        source = JobDocument(
+            name="语义导航",
+            steps=[
+                JobStep(
+                    name="点击搜索",
+                    recognition="OCR",
+                    action="Click",
+                    expected="搜索",
+                    roi=[36, 80, 144, 64],
+                    target=[504, 80, 180, 64],
+                    post_delay=700,
+                    semantic_purpose="click",
+                    roi_ratio=[.05, .05, .25, .09],
+                    target_ratio=[.7, .05, .95, .09],
+                ),
+                JobStep(
+                    name="检查结果",
+                    recognition="OCR",
+                    action="DoNothing",
+                    expected="搜索结果",
+                    roi=[36, 160, 360, 80],
+                    post_delay=200,
+                    semantic_purpose="check",
+                    roi_ratio=[.05, .1, .55, .15],
+                ),
+                JobStep(
+                    name="识别完成",
+                    recognition="OCR",
+                    action="DoNothing",
+                    expected="完成",
+                    roi=[36, 320, 180, 80],
+                    post_delay=200,
+                    semantic_purpose="recognize",
+                    roi_ratio=[.05, .2, .3, .25],
+                ),
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "semantic.maa_job.json"
+            source.save(path)
+            loaded = JobDocument.load(path)
+            stored = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(loaded, source)
+        pipeline = loaded.to_pipeline()
+        click = pipeline["点击搜索"]
+        check = pipeline["检查结果"]
+        recognize = pipeline["识别完成"]
+        self.assertEqual(click["roi"], [36, 80, 144, 64])
+        self.assertEqual(click["target"], [504, 80, 180, 64])
+        self.assertEqual(click["action"], "Click")
+        self.assertEqual(click["next"], ["检查结果"])
+        self.assertEqual(check["action"], "DoNothing")
+        self.assertEqual(check["next"], ["识别完成"])
+        self.assertNotIn("target", check)
+        self.assertEqual(recognize["action"], "DoNothing")
+        self.assertEqual(recognize["next"], [])
+        self.assertNotIn("semantic_purpose", click)
+        for node in (click, check, recognize):
+            self.assertNotIn("roi_ratio", node)
+            self.assertNotIn("target_ratio", node)
+
+        self.assertEqual(stored["format_version"], JOB_FORMAT_VERSION)
+        self.assertEqual(stored["steps"][0]["roi_ratio"], [.05, .05, .25, .09])
+
+    def test_runtime_materializes_semantic_ratios_for_different_aspect_ratio(self):
+        document = JobDocument(
+            name="aspect_ratio",
+            device_size=[720, 1600],
+            steps=[
+                JobStep(
+                    name="semantic_click",
+                    recognition="OCR",
+                    action="Click",
+                    expected="Open",
+                    roi=[0, 1280, 720, 160],
+                    target=[72, 1280, 360, 160],
+                    semantic_purpose="click",
+                    roi_ratio=[0, .8, 1, .9],
+                    target_ratio=[.1, .8, .6, .9],
+                ),
+                JobStep(
+                    name="regular_click",
+                    recognition="DirectHit",
+                    action="Click",
+                    target=[10, 20],
+                ),
+            ],
+        )
+
+        pipeline = document.to_pipeline(runtime_device_size=[720, 1280])
+
+        semantic = pipeline["semantic_click"]
+        self.assertEqual(semantic["roi"], [0, 1024, 720, 128])
+        self.assertEqual(semantic["target"], [72, 1024, 360, 128])
+        self.assertNotIn("roi_ratio", semantic)
+        self.assertNotIn("target_ratio", semantic)
+        self.assertEqual(pipeline["regular_click"]["target"], [10, 20])
+
+    def test_legacy_v2_semantic_pixels_derive_runtime_ratios(self):
+        payload = {
+            "format_version": 2,
+            "name": "legacy_semantic",
+            "device_size": [720, 1600],
+            "steps": [
+                {
+                    "name": "legacy_check",
+                    "recognition": "OCR",
+                    "action": "DoNothing",
+                    "expected": "Ready",
+                    "roi": [0, 1280, 720, 160],
+                    "semantic_purpose": "check",
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "legacy-v2.maa_job.json"
+            path.write_text(
+                json.dumps(payload, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            loaded = JobDocument.load(path)
+
+        self.assertIsNone(loaded.steps[0].roi_ratio)
+        pipeline = loaded.to_pipeline(runtime_device_size=[720, 1280])
+        self.assertEqual(
+            pipeline["legacy_check"]["roi"],
+            [0, 1024, 720, 128],
+        )
+
+    def test_ratio_metadata_validation_rejects_malformed_bounds(self):
+        step = JobStep(
+            name="bad_ratio",
+            recognition="OCR",
+            action="DoNothing",
+            expected="Ready",
+            roi=[0, 0, 100, 100],
+            semantic_purpose="check",
+            roi_ratio=[0.8, 0.1, 0.2, 0.3],
+        )
+
+        self.assertTrue(any("roi_ratio" in error for error in step.validate()))
+
+    def test_semantic_validation_reports_purpose_and_shape_errors(self):
+        invalid = JobStep(
+            name="错误语义步骤",
+            recognition="DirectHit",
+            action="Click",
+            roi=[10, 20, 0, 40],
+            target=[100, 200],
+            semantic_purpose="click",
+        )
+        errors = "\n".join(invalid.validate())
+        self.assertIn("语义步骤必须使用 OCR 识别", errors)
+        self.assertIn("[x, y, 宽, 高] 格式的识别区域", errors)
+        self.assertIn("[x, y, 宽, 高] 格式的点击区域", errors)
+
+        unsupported = JobStep(name="错误用途", semantic_purpose="tap")
+        self.assertIn("不支持的语义用途: tap", "\n".join(unsupported.validate()))
+
+        mismatched = JobStep(
+            name="错误检查",
+            recognition="OCR",
+            action="Click",
+            expected="已完成",
+            roi=[0, 0, 100, 40],
+            target=[0, 0, 100, 40],
+            semantic_purpose="check",
+        )
+        self.assertIn("check 语义用途必须使用 DoNothing 动作", "\n".join(mismatched.validate()))
+
+    def test_loads_legacy_v1_and_v2_steps_without_semantic_purpose(self):
+        for version in (1, 2):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as temp_dir:
+                path = Path(temp_dir) / f"v{version}.maa_job.json"
+                path.write_text(
+                    json.dumps(
+                        {
+                            "format_version": version,
+                            "name": f"旧版 v{version}",
+                            "steps": [
+                                {
+                                    "name": "返回",
+                                    "recognition": "DirectHit",
+                                    "action": "ClickKey",
+                                    "key": 4,
+                                }
+                            ],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+
+                loaded = JobDocument.load(path)
+
+                self.assertEqual(loaded.steps[0].semantic_purpose, "")
+                self.assertEqual(loaded.validate(), [])
+
     def test_exports_linear_template_and_input_pipeline(self):
         document = JobDocument(
             name="QQ 登录演示",
@@ -53,7 +256,7 @@ class JobModelTests(unittest.TestCase):
             source.save(path)
             loaded = JobDocument.load(path)
             self.assertEqual(loaded, source)
-            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["format_version"], 2)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["format_version"], JOB_FORMAT_VERSION)
 
     def test_prerequisites_are_composed_before_current_steps(self):
         with tempfile.TemporaryDirectory() as temp_dir:

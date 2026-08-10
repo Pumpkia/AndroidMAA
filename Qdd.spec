@@ -32,7 +32,8 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='QQJobEditor',
+    name='Qdd',
+    icon='assets\\icons\\qdd.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -51,5 +52,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='QQJobEditor',
+    name='Qdd',
 )

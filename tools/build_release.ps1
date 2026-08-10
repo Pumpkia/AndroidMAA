@@ -10,12 +10,12 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $stagingRoot = Join-Path $projectRoot $StagingName
 $workPath = Join-Path $stagingRoot "work"
 $stagingDistPath = Join-Path $stagingRoot "dist"
-$stagedAppPath = Join-Path $stagingDistPath "QQJobEditor"
+$stagedAppPath = Join-Path $stagingDistPath "Qdd"
 $canonicalDistPath = Join-Path $projectRoot "dist"
-$canonicalAppPath = Join-Path $canonicalDistPath "QQJobEditor"
+$canonicalAppPath = Join-Path $canonicalDistPath "Qdd"
 $backupAppPath = Join-Path $stagingRoot "previous-app"
 $releasePath = Join-Path $projectRoot "release"
-$archivePath = Join-Path $releasePath "QQJobEditor-$Version-win-x64.zip"
+$archivePath = Join-Path $releasePath "Qdd-$Version-win-x64.zip"
 
 function Copy-FileTree {
     param(
@@ -100,19 +100,24 @@ try {
         throw "Unit tests failed."
     }
 
-    python -m PyInstaller --noconfirm --clean --workpath $workPath --distpath $stagingDistPath QQJobEditor.spec
+    python -m PyInstaller --noconfirm --clean --workpath $workPath --distpath $stagingDistPath Qdd.spec
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller failed."
     }
 
     Copy-Item -LiteralPath (Join-Path $projectRoot "assets") -Destination $stagedAppPath -Recurse -Force
-    Copy-Item -LiteralPath (Join-Path $projectRoot "jobs") -Destination $stagedAppPath -Recurse -Force
+    New-Item -ItemType Directory -Path (Join-Path $stagedAppPath "jobs") -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $projectRoot "platform-tools") -Destination $stagedAppPath -Recurse -Force
     Copy-Item -LiteralPath (Join-Path $projectRoot "README.md") -Destination $stagedAppPath -Force
 
     $debugPath = Join-Path $stagedAppPath "assets\debug"
     if (Test-Path -LiteralPath $debugPath) {
         Remove-Item -LiteralPath $debugPath -Recurse -Force
+    }
+
+    $recordedImagePath = Join-Path $stagedAppPath "assets\resource\image\jobs"
+    if (Test-Path -LiteralPath $recordedImagePath) {
+        Remove-Item -LiteralPath $recordedImagePath -Recurse -Force
     }
 
     $agentBinary = Join-Path $stagedAppPath "_internal\MaaAgentBinary\maatouch\universal\maatouch"
@@ -132,7 +137,7 @@ try {
     New-Item -ItemType Directory -Path $canonicalDistPath -Force | Out-Null
     try {
         Move-Item -LiteralPath $stagedAppPath -Destination $canonicalAppPath
-        if (-not (Test-Path -LiteralPath (Join-Path $canonicalAppPath "QQJobEditor.exe"))) {
+        if (-not (Test-Path -LiteralPath (Join-Path $canonicalAppPath "Qdd.exe"))) {
             throw "Canonical application promotion failed."
         }
         if (Test-Path -LiteralPath $backupAppPath) {
