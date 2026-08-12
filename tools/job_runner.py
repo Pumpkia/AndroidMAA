@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import threading
@@ -74,10 +75,22 @@ def controller_runtime_device_size(controller) -> list[int]:
 
 
 class MaaJobRunner:
-    def __init__(self, app_dir: Path, assets_dir: Path, jobs_dir: Path) -> None:
+    def __init__(
+        self,
+        app_dir: Path,
+        assets_dir: Path,
+        jobs_dir: Path,
+        user_resource_dir: Path | None = None,
+        user_data_dir: Path | None = None,
+    ) -> None:
         self.app_dir = app_dir
         self.assets_dir = assets_dir
         self.jobs_dir = jobs_dir
+        self.user_resource_dir = Path(user_resource_dir) if user_resource_dir is not None else None
+        self.user_data_dir = (
+            Path(user_data_dir) if user_data_dir is not None
+            else Path(jobs_dir).parent
+        )
         self._tasker: Tasker | None = None
         self._tasker_sink: EditorTaskerSink | None = None
         self._context_sink: EditorContextSink | None = None
@@ -88,12 +101,48 @@ class MaaJobRunner:
         with self._lock:
             return bool(self._tasker and self._tasker.running)
 
+    def _resource_directories(self) -> list[Path]:
+        directories = [self.assets_dir / "resource"]
+        if self.user_resource_dir is not None:
+            directories.append(self.user_resource_dir)
+
+        unique = []
+        seen = set()
+        for directory in directories:
+            identity = os.path.normcase(str(directory.resolve(strict=False)))
+            if identity not in seen:
+                seen.add(identity)
+                unique.append(directory)
+        return unique
+
+    def _post_resource_bundles(self, resource):
+        last_job = None
+        for directory in self._resource_directories():
+            last_job = resource.post_bundle(directory).wait()
+            if not last_job.succeeded:
+                return last_job
+        return last_job
+
+    def _load_default_config(self) -> dict:
+        config_path = self.assets_dir / "config" / "maa_option.json"
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except FileNotFoundError as error:
+            raise RuntimeError(f"Maa default configuration is missing: {config_path}") from error
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"Maa default configuration is invalid: {config_path}") from error
+
+        if not isinstance(config, dict):
+            raise RuntimeError(f"Maa default configuration must be a JSON object: {config_path}")
+        return config
+
     def run(self, document: JobDocument, serial: str, emit: LogCallback) -> bool:
         with self._lock:
             if self._tasker and self._tasker.running:
                 raise RuntimeError("已有作业正在执行")
 
-        Toolkit.init_option(self.assets_dir)
+        default_config = self._load_default_config()
+        Toolkit.init_option(self.user_data_dir, default_config)
         adb_path = self._adb_path()
         devices = Toolkit.find_adb_devices(adb_path if adb_path.exists() else None)
         device = next((item for item in devices if item.address == serial), None)
@@ -123,7 +172,7 @@ class MaaJobRunner:
         emit(f"Maa coordinates: {runtime_device_size[0]} x {runtime_device_size[1]}")
 
         resource = Resource()
-        resource_job = resource.post_bundle(self.assets_dir / "resource").wait()
+        resource_job = self._post_resource_bundles(resource)
         if not resource_job.succeeded:
             raise RuntimeError("Maa 资源加载失败")
 

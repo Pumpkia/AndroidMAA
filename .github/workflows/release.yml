@@ -30,15 +30,23 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r tools/requirements.txt
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
       - name: Build Windows package
         shell: pwsh
-        run: .\tools\build_release.ps1 -Version "$env:VERSION"
+        run: |
+          $isccPath = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          .\tools\build_release.ps1 -Version "$env:VERSION" -IsccPath $isccPath
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: Qdd-${{ env.VERSION }}-win-x64
-          path: release/*.zip
+          path: |
+            release/*.zip
+            release/Qdd-*-setup.exe
 
   macos:
     name: macOS

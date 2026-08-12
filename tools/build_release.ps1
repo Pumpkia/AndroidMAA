@@ -1,7 +1,8 @@
 param(
     [string]$Version = "v2.1.0",
     [ValidatePattern('^\.packaging(?:-[A-Za-z0-9._-]+)?$')]
-    [string]$StagingName = ".packaging-build"
+    [string]$StagingName = ".packaging-build",
+    [string]$IsccPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,6 +17,47 @@ $canonicalAppPath = Join-Path $canonicalDistPath "Qdd"
 $backupAppPath = Join-Path $stagingRoot "previous-app"
 $releasePath = Join-Path $projectRoot "release"
 $archivePath = Join-Path $releasePath "Qdd-$Version-win-x64.zip"
+$setupPath = Join-Path $releasePath "Qdd-$Version-setup.exe"
+$installerScriptPath = Join-Path $projectRoot "installer\Qdd.iss"
+$portableFlagPath = Join-Path $stagedAppPath "portable.flag"
+$setupVersion = $Version -replace '^v', ''
+if ($setupVersion -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Version must use vMAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH format."
+}
+
+function Resolve-IsccPath {
+    param([string]$ExplicitPath)
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        if (Test-Path -LiteralPath $ExplicitPath -PathType Leaf) {
+            return (Resolve-Path -LiteralPath $ExplicitPath).Path
+        }
+        $explicitCommand = Get-Command -Name $ExplicitPath -ErrorAction SilentlyContinue
+        if ($null -ne $explicitCommand -and $explicitCommand.CommandType -eq "Application") {
+            return $explicitCommand.Source
+        }
+        throw "Inno Setup compiler was not found at the explicit -IsccPath value: $ExplicitPath"
+    }
+
+    $pathCommand = Get-Command -Name "ISCC.exe" -ErrorAction SilentlyContinue
+    if ($null -ne $pathCommand) {
+        return $pathCommand.Source
+    }
+
+    $programFilesRoots = @(
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+        [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+    foreach ($programFilesRoot in $programFilesRoots) {
+        $candidate = Join-Path $programFilesRoot "Inno Setup 6\ISCC.exe"
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+
+    throw "Inno Setup compiler (ISCC.exe) was not found. Install Inno Setup 6 or pass -IsccPath with the compiler path."
+}
 
 function Copy-FileTree {
     param(
@@ -83,6 +125,11 @@ function Copy-RuntimeData {
     }
 }
 
+$resolvedIsccPath = Resolve-IsccPath -ExplicitPath $IsccPath
+if (-not (Test-Path -LiteralPath $installerScriptPath -PathType Leaf)) {
+    throw "Inno Setup script is missing: $installerScriptPath"
+}
+
 if (Test-Path -LiteralPath $stagingRoot) {
     Remove-Item -LiteralPath $stagingRoot -Recurse -Force
 }
@@ -106,6 +153,10 @@ try {
     }
 
     Copy-Item -LiteralPath (Join-Path $projectRoot "assets") -Destination $stagedAppPath -Recurse -Force
+    $stagedJobsPath = Join-Path $stagedAppPath "jobs"
+    if (Test-Path -LiteralPath $stagedJobsPath) {
+        Remove-Item -LiteralPath $stagedJobsPath -Recurse -Force
+    }
     New-Item -ItemType Directory -Path (Join-Path $stagedAppPath "jobs") -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $projectRoot "platform-tools") -Destination $stagedAppPath -Recurse -Force
     Copy-Item -LiteralPath (Join-Path $projectRoot "README.md") -Destination $stagedAppPath -Force
@@ -125,10 +176,45 @@ try {
         throw "Packaged MaaAgentBinary is incomplete."
     }
 
+    $stagedJobFiles = @(Get-ChildItem -LiteralPath $stagedJobsPath -Recurse -File)
+    if ($stagedJobFiles.Count -ne 0) {
+        throw "Release staging jobs directory must be empty."
+    }
+    if (Test-Path -LiteralPath $recordedImagePath) {
+        throw "Release staging must not contain recorded job images."
+    }
+
     if (Test-Path -LiteralPath $archivePath) {
         Remove-Item -LiteralPath $archivePath -Force
     }
+    if (Test-Path -LiteralPath $setupPath) {
+        Remove-Item -LiteralPath $setupPath -Force
+    }
+
+    New-Item -ItemType File -Path $portableFlagPath -Force | Out-Null
     Compress-Archive -Path $stagedAppPath -DestinationPath $archivePath -CompressionLevel Optimal
+    Remove-Item -LiteralPath $portableFlagPath -Force
+    if (Test-Path -LiteralPath $portableFlagPath) {
+        throw "portable.flag must be absent while compiling the installer."
+    }
+
+    $isccArguments = @(
+        "/DAppVersion=$setupVersion"
+        "/DSourceDir=$stagedAppPath"
+        "/DOutputDir=$releasePath"
+        "/DOutputBaseFilename=Qdd-$Version-setup"
+        "/DIconPath=$(Join-Path $projectRoot 'assets\icons\qdd.ico')"
+        $installerScriptPath
+    )
+    & $resolvedIsccPath @isccArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Inno Setup compilation failed."
+    }
+    if (-not (Test-Path -LiteralPath $setupPath -PathType Leaf)) {
+        throw "Inno Setup did not create the expected installer: $setupPath"
+    }
+
+    New-Item -ItemType File -Path $portableFlagPath -Force | Out-Null
 
     if (Test-Path -LiteralPath $canonicalAppPath) {
         Copy-RuntimeData -ExistingAppPath $canonicalAppPath -NewAppPath $stagedAppPath
@@ -155,6 +241,7 @@ try {
     }
 
     Write-Output "Release archive: $archivePath"
+    Write-Output "Installer: $setupPath"
     Write-Output "Application: $canonicalAppPath"
 }
 finally {

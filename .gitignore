@@ -17,6 +17,7 @@ work/
 
 # Runtime logs and debug captures
 logs/
+/exports/
 assets/debug/
 *.log
 

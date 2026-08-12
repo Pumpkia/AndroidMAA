@@ -22,18 +22,17 @@ from PySide6.QtWidgets import (
     QSlider, QSpinBox, QStackedWidget, QStyle, QTableWidget, QTableWidgetItem,
     QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
+from app_paths import APP_PATHS, initialize_data_layout
 from job_model import JobDocument, JobStep, safe_name
 from job_runner import MaaJobRunner
 from semantic_navigator import SemanticNavigatorPage
 
 
-def app_dir():
-    return Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
 
 
-APP_DIR = app_dir()
-ASSETS_DIR = APP_DIR / "assets"
-JOBS_DIR = APP_DIR / "jobs"
+APP_DIR = APP_PATHS.app_dir
+ASSETS_DIR = APP_PATHS.assets_dir
+JOBS_DIR = APP_PATHS.jobs_dir
 
 
 def adb_executable():
@@ -702,7 +701,7 @@ class RecordPage(QWidget):
             x, y, width, height = self.canvas.roi
             crop = self.app.screen_image[y:y + height, x:x + width]
             relative = Path("jobs") / safe_name(self.app.document.name) / f"{safe_name(self.name.text(), 'step')}.png"
-            output = ASSETS_DIR / "resource" / "image" / relative
+            output = APP_PATHS.template_dir / relative.relative_to("jobs")
             output.parent.mkdir(parents=True, exist_ok=True)
             if crop.size and write_png(output, crop):
                 template = relative.as_posix()
@@ -836,7 +835,11 @@ class PlaybackPage(QWidget):
         super().__init__()
         self.app = app
         self.queue = []
-        self.runner = MaaJobRunner(APP_DIR, ASSETS_DIR, JOBS_DIR)
+        self.runner = MaaJobRunner(
+            APP_DIR, ASSETS_DIR, JOBS_DIR,
+            user_resource_dir=APP_PATHS.user_resource_dir,
+            user_data_dir=APP_PATHS.data_dir,
+        )
         self.stop_requested = False
         self.mutable_controls = []
         self.log_signal.connect(self.append_log)
@@ -1149,7 +1152,7 @@ class PlaybackPage(QWidget):
     def capture_failure_screen(self, job_path, session):
         try:
             image = session.screenshot()
-            output_dir = APP_DIR / "logs" / "failures"
+            output_dir = APP_PATHS.logs_dir / "failures"
             output_dir.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             output = output_dir / f"{stamp}-{safe_name(job_path.stem, 'job')}.png"
@@ -1181,8 +1184,8 @@ class Workbench(QMainWindow):
     ui_call = Signal(object)
 
     def __init__(self):
+        initialize_data_layout()
         super().__init__()
-        JOBS_DIR.mkdir(parents=True, exist_ok=True)
         self.adb = AdbClient()
         self.document = JobDocument(name="新用例", category="默认")
         self.current_path = None
@@ -1556,7 +1559,7 @@ class Workbench(QMainWindow):
         if errors:
             QMessageBox.warning(self, "用例无法导出", "\n".join(errors))
             return
-        default = ASSETS_DIR / "resource" / "pipeline" / f"{safe_name(self.document.name)}.json"
+        default = APP_PATHS.exports_dir / f"{safe_name(self.document.name)}.json"
         value, _filter = QFileDialog.getSaveFileName(self, "导出 Pipeline", str(default), "JSON (*.json)")
         if value:
             try:

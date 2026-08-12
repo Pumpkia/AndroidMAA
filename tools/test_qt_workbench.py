@@ -680,6 +680,107 @@ class WorkbenchCaptureAndRaceTests(unittest.TestCase):
             self.close_window(window)
 
 
+
+class UserDataLayoutTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.qt_app = QApplication.instance() or QApplication([])
+
+    def test_installed_layout_uses_user_jobs_templates_exports_and_overlay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            install_dir = root / "Program Files" / "Qdd"
+            data_dir = root / "LocalAppData" / "Qdd"
+            user_resource_dir = data_dir / "resource"
+            paths = SimpleNamespace(
+                app_dir=install_dir,
+                assets_dir=install_dir / "assets",
+                data_dir=data_dir,
+                jobs_dir=data_dir / "jobs",
+                user_resource_dir=user_resource_dir,
+                template_dir=user_resource_dir / "image" / "jobs",
+                logs_dir=data_dir / "logs",
+                exports_dir=data_dir / "exports",
+                portable=False,
+            )
+            initialized = []
+            export_defaults = []
+
+            def choose_export(_parent, _title, default, _filter):
+                export_defaults.append(Path(default))
+                return default, ""
+
+            with (
+                patch.object(Workbench, "refresh_devices", lambda _window: None),
+                patch("qt_workbench.APP_PATHS", paths),
+                patch("qt_workbench.APP_DIR", paths.app_dir),
+                patch("qt_workbench.ASSETS_DIR", paths.assets_dir),
+                patch("qt_workbench.JOBS_DIR", paths.jobs_dir),
+                patch(
+                    "qt_workbench.initialize_data_layout",
+                    lambda: initialized.append(True),
+                ),
+            ):
+                window = Workbench()
+                try:
+                    self.assertEqual(initialized, [True])
+                    self.assertEqual(
+                        window.playback.runner.user_resource_dir,
+                        paths.user_resource_dir,
+                    )
+                    self.assertEqual(
+                        window.playback.runner.user_data_dir,
+                        paths.data_dir,
+                    )
+                    self.assertEqual(window.playback.runner.jobs_dir, paths.jobs_dir)
+                    self.assertEqual(window.playback.runner.assets_dir, paths.assets_dir)
+
+                    window.document = JobDocument(name="Case", category="Category")
+                    window.record.case_name.setText("Case")
+                    window.record.case_category.setText("Category")
+                    window.record.name.setText("Login")
+                    window.record.recognition.setCurrentIndex(
+                        window.record.recognition.findData("TemplateMatch")
+                    )
+                    window.record.canvas.roi = [2, 3, 8, 6]
+                    window.screen_image = np.full((20, 20, 3), 127, dtype=np.uint8)
+
+                    step = window.record.make_step()
+                    expected_template = paths.template_dir / "Case" / "Login.png"
+                    self.assertEqual(step.template, "jobs/Case/Login.png")
+                    self.assertTrue(expected_template.is_file())
+                    self.assertFalse(
+                        (
+                            paths.assets_dir
+                            / "resource"
+                            / "image"
+                            / step.template
+                        ).exists()
+                    )
+
+                    window.document.steps = [step]
+                    with patch("qt_workbench.QMessageBox.information"):
+                        window.save_job()
+                    expected_job = paths.jobs_dir / "Category" / "Case.maa_job.json"
+                    self.assertEqual(window.current_path, expected_job)
+                    self.assertTrue(expected_job.is_file())
+
+                    with (
+                        patch(
+                            "qt_workbench.QFileDialog.getSaveFileName",
+                            side_effect=choose_export,
+                        ),
+                        patch("qt_workbench.QMessageBox.critical") as critical,
+                    ):
+                        window.export_pipeline()
+                    expected_export = paths.exports_dir / "Case.json"
+                    self.assertEqual(export_defaults, [expected_export])
+                    self.assertTrue(expected_export.is_file())
+                    critical.assert_not_called()
+                finally:
+                    window.set_dirty(False)
+                    window.close()
+
 class WorkerAndFailureCaptureTests(unittest.TestCase):
     def test_failure_capture_uses_bound_session(self):
         image = np.zeros((12, 18, 3), dtype=np.uint8)
@@ -688,7 +789,7 @@ class WorkerAndFailureCaptureTests(unittest.TestCase):
         session = SimpleNamespace(screenshot=lambda: image)
 
         with tempfile.TemporaryDirectory() as directory, patch(
-            "qt_workbench.APP_DIR", Path(directory)
+            "qt_workbench.APP_PATHS", SimpleNamespace(logs_dir=Path(directory) / "logs")
         ):
             PlaybackPage.capture_failure_screen(
                 page, Path("case.maa_job.json"), session
