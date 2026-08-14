@@ -142,7 +142,19 @@ try {
         throw "Schema validation failed."
     }
 
-    python -m unittest discover -s tools -p "test_*.py"
+    $originalQtPlatform = $env:QT_QPA_PLATFORM
+    try {
+        $env:QT_QPA_PLATFORM = "offscreen"
+        python -m unittest discover -s tools -p "test_*.py"
+    }
+    finally {
+        if ($null -eq $originalQtPlatform) {
+            Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:QT_QPA_PLATFORM = $originalQtPlatform
+        }
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "Unit tests failed."
     }

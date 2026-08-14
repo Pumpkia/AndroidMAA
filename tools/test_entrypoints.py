@@ -24,16 +24,11 @@ class EntrypointContractTests(unittest.TestCase):
         self.assertTrue((icon_dir / "qdd.ico").is_file())
         self.assertTrue((icon_dir / "qdd.icns").is_file())
 
-    def test_cross_platform_release_branding(self):
+    def test_windows_release_branding(self):
         legacy_name = "QQ" + "JobEditor"
         windows_spec = (PROJECT_DIR / "Qdd.spec").read_text(encoding="utf-8")
-        macos_spec_path = PROJECT_DIR / "Qdd.macos.spec"
-        macos_spec = macos_spec_path.read_text(encoding="utf-8")
         workflow = (
             PROJECT_DIR / ".github" / "workflows" / "release.yml"
-        ).read_text(encoding="utf-8")
-        macos_builder = (
-            PROJECT_DIR / "tools" / "build_release_macos.py"
         ).read_text(encoding="utf-8")
         readme = (PROJECT_DIR / "README.md").read_text(encoding="utf-8")
 
@@ -41,20 +36,19 @@ class EntrypointContractTests(unittest.TestCase):
             (PROJECT_DIR / f"{legacy_name}.macos.spec").exists()
         )
         self.assertIn("name='Qdd'", windows_spec)
-        self.assertIn(r"assets\\icons\\qdd.ico", windows_spec)
-        self.assertEqual(macos_spec.count('name="Qdd"'), 2)
-        self.assertIn('icon="assets/icons/qdd.icns"', macos_spec)
-        self.assertIn('APP_NAME = "Qdd"', macos_builder)
-        self.assertIn('MACOS_SPEC_NAME = "Qdd.macos.spec"', macos_builder)
+        self.assertIn("qdd.ico", windows_spec)
         self.assertIn("name: Qdd-${{ env.VERSION }}-win-x64", workflow)
-        self.assertIn("name: Qdd-${{ env.VERSION }}-macos", workflow)
-        self.assertIn("release/Qdd-v2.1.0-macos-arm64.zip", readme)
-        self.assertIn("release/Qdd-v2.1.0-macos-arm64.dmg", readme)
+        self.assertNotIn("macos-latest", workflow)
+        self.assertNotIn("build_release_macos.py", workflow)
+        self.assertNotIn("Qdd-${{ env.VERSION }}-macos", workflow)
+        self.assertNotIn("release/*.dmg", workflow)
+        self.assertNotIn("### macOS v2.1.0", readme)
+        self.assertNotIn("Qdd-v2.1.0-macos-arm64.zip", readme)
+        self.assertNotIn("Qdd-v2.1.0-macos-arm64.dmg", readme)
+        self.assertNotIn("macOS 13", readme)
 
         for label, contents in (
             ("Windows spec", windows_spec),
-            ("macOS spec", macos_spec),
-            ("macOS builder", macos_builder),
             ("release workflow", workflow),
             ("README", readme),
         ):
