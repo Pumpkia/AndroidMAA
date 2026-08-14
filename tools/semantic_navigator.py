@@ -750,9 +750,13 @@ class SemanticNavigatorPage(QWidget):
         self.snapshot: UiSnapshot | None = None
         self.screen_image = None
         self.snapshot_serial = ""
+        self.generated_module_id = "semantic"
+        self.generated_module_version = 1
+        self.generated_prerequisites: list[str] = []
         self.nodes: list[UiNode] = []
         self.generated_steps: list[JobStep] = []
         self.generated_size = [720, 1600]
+        self.has_job_context = False
         self.editing_id = ""
         self.load_error = ""
         try:
@@ -1315,6 +1319,45 @@ class SemanticNavigatorPage(QWidget):
         self.refresh_generated_steps()
         self.set_state("步骤已清空", "idle")
 
+    def reset_generated_job(self) -> None:
+        registry = getattr(self.app, "module_registry", None)
+        semantic_module = registry.get("semantic") if registry is not None else None
+        self.generated_size = [720, 1600]
+        self.generated_module_id = "semantic"
+        self.generated_module_version = semantic_module.version if semantic_module is not None else 1
+        self.generated_prerequisites = []
+        self.has_job_context = False
+        self.generated_steps.clear()
+        self.case_name.setText("语义用例")
+        self.case_category.setText("语义导航")
+        self.refresh_generated_steps()
+    def load_job_context(self, document: JobDocument, path: Path | None) -> None:
+        if not isinstance(document, JobDocument):
+            raise TypeError("关联对象必须是 JobDocument")
+        registry = getattr(self.app, "module_registry", None)
+        semantic_module = registry.get("semantic") if registry is not None else None
+        fallback_version = semantic_module.version if semantic_module is not None else 1
+        self.generated_steps = list(document.steps)
+        size = document.device_size if isinstance(document.device_size, list) else [720, 1600]
+        self.generated_size = list(size)
+        if isinstance(document.module_id, str) and document.module_id:
+            self.generated_module_id = document.module_id
+            self.generated_module_version = document.module_version
+        elif path is not None:
+            self.generated_module_id = "semantic"
+            self.generated_module_version = fallback_version
+        else:
+            self.generated_module_id = "semantic"
+            self.generated_module_version = fallback_version
+        self.generated_prerequisites = list(document.prerequisites)
+        self.has_job_context = bool(path is not None or document.module_id or document.prerequisites)
+        self.case_name.setText(document.name)
+        self.case_category.setText(document.category)
+        self.refresh_generated_steps()
+        self.set_state(
+            f"已关联：{path.name}" if path else "已关联当前用例",
+            "success",
+        )
     def generated_document(self) -> JobDocument:
         name = self.case_name.text().strip()
         category = self.case_category.text().strip() or "语义导航"
@@ -1322,13 +1365,28 @@ class SemanticNavigatorPage(QWidget):
             raise ValueError("请填写用例名称")
         if not self.generated_steps:
             raise ValueError("请先生成至少一个用例步骤")
+        module_id = self.generated_module_id if self.has_job_context else "semantic"
+        registry = getattr(self.app, "module_registry", None)
+        semantic_module = registry.get("semantic") if registry is not None else None
+        module_version = (
+            self.generated_module_version
+            if self.has_job_context
+            else (semantic_module.version if semantic_module is not None else 1)
+        )
+        prerequisites = list(self.generated_prerequisites) if self.has_job_context else []
         document = JobDocument(
             name=name,
             category=category,
+            prerequisites=prerequisites,
+            module_id=module_id,
+            module_version=module_version,
             device_size=list(self.generated_size),
             steps=list(self.generated_steps),
         )
         errors = document.validate()
+        registry = getattr(self.app, "module_registry", None)
+        if registry is not None:
+            errors.extend(registry.validate_document(document))
         if errors:
             raise ValueError("\n".join(errors))
         return document
@@ -1336,7 +1394,7 @@ class SemanticNavigatorPage(QWidget):
     def save_generated_job(self) -> None:
         try:
             document = self.generated_document()
-            output = (
+            output = self.app.current_path or (
                 self.map_path.parent
                 / safe_name(document.category, "语义导航")
                 / f"{safe_name(document.name, 'semantic_job')}.maa_job.json"
@@ -1347,6 +1405,17 @@ class SemanticNavigatorPage(QWidget):
                 return
             document.save(output)
             self.app.playback.refresh_library()
+            self.app.document = document
+            self.app.current_path = output
+            self.generated_module_id = document.module_id
+            self.generated_module_version = document.module_version
+            self.generated_prerequisites = list(document.prerequisites)
+            self.has_job_context = True
+            self.app.record.case_name.setText(document.name)
+            self.app.record.case_category.setText(document.category)
+            self.app.record.refresh_module_selection(document.module_id)
+            self.app.record.refresh_steps(0)
+            self.app.set_dirty(False)
             self.app.toast(f"语义用例已保存：{output.name}")
             self.set_state("已保存到用例库", "success")
             self.append_log(f"用例已保存：{output}")
@@ -1357,16 +1426,17 @@ class SemanticNavigatorPage(QWidget):
         try:
             document = self.generated_document()
             self.app.document = document
-            self.app.current_path = None
+            self.has_job_context = True
+            # Keep current_path for an existing repository job; new jobs already have no path.
             self.app.record.case_name.setText(document.name)
             self.app.record.case_category.setText(document.category)
+            self.app.record.refresh_module_selection(document.module_id)
             self.app.record.refresh_steps(0)
             self.app.record.clear_marks()
             self.app.set_dirty(True)
             self.app.switch_page(0)
         except Exception as error:
             QMessageBox.warning(self, "转到用例录制失败", str(error))
-
     def execute_command(self) -> None:
         command = self.command.text().strip()
         if not command:

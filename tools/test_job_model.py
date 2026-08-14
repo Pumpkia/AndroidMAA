@@ -213,6 +213,20 @@ class JobModelTests(unittest.TestCase):
                 self.assertEqual(loaded.steps[0].semantic_purpose, "")
                 self.assertEqual(loaded.validate(), [])
 
+    def test_rejects_malformed_job_container_types(self):
+        cases = (
+            ([], "作业文件顶层必须是对象"),
+            ({"format_version": 1, "steps": {}}, "steps 必须是数组"),
+            ({"format_version": 1, "prerequisites": {"job": 1}}, "prerequisites 必须是字符串数组"),
+            ({"format_version": 1, "steps": [None]}, "步骤定义必须是对象"),
+        )
+        for payload, message in cases:
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as temp_dir:
+                path = Path(temp_dir) / "malformed.maa_job.json"
+                path.write_text(json.dumps(payload), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, message):
+                    JobDocument.load(path)
+
     def test_exports_linear_template_and_input_pipeline(self):
         document = JobDocument(
             name="QQ 登录演示",
@@ -258,6 +272,62 @@ class JobModelTests(unittest.TestCase):
             self.assertEqual(loaded, source)
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["format_version"], JOB_FORMAT_VERSION)
 
+    def test_round_trip_job_file_with_module_binding(self):
+        source = JobDocument(
+            name="semantic flow",
+            category="automation",
+            module_id="semantic",
+            module_version=3,
+            steps=[
+                JobStep(
+                    name="check ready",
+                    recognition="OCR",
+                    action="DoNothing",
+                    expected="Ready",
+                    roi=[0, 0, 100, 40],
+                    semantic_purpose="check",
+                )
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "bound.maa_job.json"
+            source.save(path)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            loaded = JobDocument.load(path)
+
+        self.assertEqual(loaded, source)
+        self.assertEqual(payload["module_id"], "semantic")
+        self.assertEqual(payload["module_version"], 3)
+
+    def test_legacy_job_without_module_binding_defaults_to_unbound(self):
+        payload = {
+            "format_version": 1,
+            "name": "legacy",
+            "category": "default",
+            "steps": [],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "legacy.maa_job.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            loaded = JobDocument.load(path)
+
+        self.assertEqual(loaded.module_id, "")
+        self.assertEqual(loaded.module_version, 1)
+        self.assertEqual(loaded.validate(), [])
+
+    def test_module_binding_validation_rejects_invalid_values(self):
+        invalid_id = JobDocument(module_id="Bad ID")
+        self.assertTrue(any("模块 ID" in error for error in invalid_id.validate()))
+
+        invalid_type = JobDocument(module_id={"id": "semantic"})
+        self.assertTrue(any("模块 ID" in error for error in invalid_type.validate()))
+
+        invalid_version = JobDocument(module_id="semantic", module_version=0)
+        self.assertTrue(any("模块版本" in error for error in invalid_version.validate()))
+
+        bool_version = JobDocument(module_id="semantic", module_version=True)
+        self.assertTrue(any("模块版本" in error for error in bool_version.validate()))
     def test_prerequisites_are_composed_before_current_steps(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             jobs_dir = Path(temp_dir) / "jobs"

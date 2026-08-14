@@ -16,15 +16,17 @@ import numpy as np
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QThread, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
+    QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
     QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
     QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
     QSlider, QSpinBox, QStackedWidget, QStyle, QTableWidget, QTableWidgetItem,
     QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from app_paths import APP_PATHS, initialize_data_layout
+from job_library import JobLibrary
 from job_model import JobDocument, JobStep, safe_name
 from job_runner import MaaJobRunner
+from module_model import ModuleDefinition, ModuleRegistry
 from semantic_navigator import SemanticNavigatorPage
 
 
@@ -33,6 +35,7 @@ from semantic_navigator import SemanticNavigatorPage
 APP_DIR = APP_PATHS.app_dir
 ASSETS_DIR = APP_PATHS.assets_dir
 JOBS_DIR = APP_PATHS.jobs_dir
+MODULES_PATH = JOBS_DIR / "modules.json"
 
 
 def adb_executable():
@@ -131,6 +134,48 @@ class PlaybackResult:
     stopped: bool = False
 
 
+def validate_playback_queue(queue, jobs_dir=None, load_document=None, strict=True, module_validate=None):
+    """Validate queue entries and dependency graphs before device actions."""
+    errors = []
+    seen = set()
+    root = Path(jobs_dir or JOBS_DIR).resolve()
+    if load_document is None:
+        load_document = JobDocument.load
+    for index, raw_path in enumerate(queue, start=1):
+        try:
+            path = Path(raw_path).resolve(strict=strict)
+        except (OSError, TypeError, ValueError) as error:
+            errors.append(f"第 {index} 个用例路径无效: {error}")
+            continue
+        identity = os.path.normcase(str(path))
+        if identity in seen:
+            errors.append(f"第 {index} 个用例重复加入队列: {path.name}")
+            continue
+        seen.add(identity)
+        if not path.is_relative_to(root):
+            errors.append(f"{path.name}: 用例路径超出用例库目录")
+            continue
+        if not path.name.endswith(".maa_job.json"):
+            errors.append(f"{path.name}: 不是 Maa 用例文件")
+            continue
+        try:
+            document = load_document(path)
+            if not isinstance(document, JobDocument):
+                if strict:
+                    errors.append(f"{path.name}: loader did not return JobDocument")
+                continue
+            related_documents = [document]
+            if document.prerequisites:
+                related_documents.extend(document.resolve_prerequisites(root))
+            for related in related_documents:
+                label = path.name if related is document else f"{path.name} -> {related.name}"
+                errors.extend(f"{label}: {message}" for message in related.validate())
+                if module_validate is not None:
+                    errors.extend(f"{label}: {message}" for message in (module_validate(related) or []))
+        except Exception as error:
+            errors.append(f"{path.name}: {error}")
+    return errors
+
 def run_playback_queue(
     queue,
     serial,
@@ -140,11 +185,34 @@ def run_playback_queue(
     should_stop,
     set_status,
     set_progress,
-    load_document=JobDocument.load,
+    load_document=None,
     capture_failure=None,
+    jobs_dir=None,
+    module_validate=None,
 ):
+    strict_preflight = load_document is None
+    if load_document is None:
+        load_document = JobDocument.load
     total = len(queue)
     succeeded = 0
+    if total == 0:
+        set_progress(0)
+        return PlaybackResult(0, 0)
+    preflight_errors = validate_playback_queue(
+        queue,
+        jobs_dir=jobs_dir,
+        load_document=load_document,
+        strict=strict_preflight,
+        module_validate=module_validate,
+    ) if strict_preflight else []
+
+    if preflight_errors:
+        for row in range(total):
+            set_status(row, "校验失败")
+        for message in preflight_errors:
+            emit(f"执行前校验失败：{message}")
+        set_progress(0)
+        return PlaybackResult(succeeded, total, failed_index=0 if total else None)
 
     def skip_remaining(start):
         for row in range(start, total):
@@ -507,6 +575,116 @@ def tool(owner, icon_name, tip, callback):
     button.clicked.connect(callback)
     return button
 
+
+class ModuleManagerDialog(QDialog):
+    def __init__(self, parent, registry, module=None):
+        super().__init__(parent)
+        self.registry = registry
+        self.module = module
+        self.setWindowTitle("自定义模块")
+        self.setMinimumWidth(520)
+        self.id_edit = QLineEdit(module.id if module else "")
+        self.id_edit.setPlaceholderText("小写字母开头，例如 qq_login")
+        self.name_edit = QLineEdit(module.name if module else "")
+        self.description_edit = QLineEdit(module.description if module else "")
+        self.version = QSpinBox()
+        self.version.setRange(1, 999999)
+        self.version.setValue(module.version if module else 1)
+        self.enabled = QCheckBox("允许绑定和回放")
+        self.enabled.setChecked(module.enabled if module else True)
+        self.purposes = {
+            value: QCheckBox(label)
+            for label, value in (("点击", "click"), ("检查", "check"), ("识别", "recognize"))
+        }
+        self.actions = {
+            value: QCheckBox(label)
+            for label, value in (
+                ("点击", "Click"), ("滑动", "Swipe"), ("输入文本", "InputText"),
+                ("按键", "ClickKey"), ("等待", "DoNothing"),
+            )
+        }
+        for value, widget in self.purposes.items():
+            widget.setChecked(value in (module.allowed_purposes if module else self.purposes))
+        for value, widget in self.actions.items():
+            widget.setChecked(value in (module.allowed_actions if module else self.actions))
+        form = QFormLayout()
+        form.addRow("模块 ID", self.id_edit)
+        form.addRow("名称", self.name_edit)
+        form.addRow("说明", self.description_edit)
+        form.addRow("规则版本", self.version)
+        purpose_host = QWidget()
+        purpose_layout = QHBoxLayout(purpose_host)
+        purpose_layout.setContentsMargins(0, 0, 0, 0)
+        for widget in self.purposes.values():
+            purpose_layout.addWidget(widget)
+        form.addRow("允许用途", purpose_host)
+        action_host = QWidget()
+        action_layout = QGridLayout(action_host)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        for index, widget in enumerate(self.actions.values()):
+            action_layout.addWidget(widget, index // 3, index % 3)
+        form.addRow("允许动作", action_host)
+        form.addRow("", self.enabled)
+        save = QPushButton("保存模块")
+        save.setObjectName("primaryButton")
+        save.clicked.connect(self.save_module)
+        cancel = QPushButton("取消")
+        cancel.clicked.connect(self.reject)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        buttons.addWidget(cancel)
+        buttons.addWidget(save)
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addLayout(buttons)
+        self.save_button = save
+        builtin = bool(module and module.id in registry.builtin_ids)
+        if builtin:
+            for widget in (self.id_edit, self.name_edit, self.description_edit, self.version, self.enabled):
+                widget.setEnabled(False)
+            for widget in (*self.purposes.values(), *self.actions.values()):
+                widget.setEnabled(False)
+            save.setEnabled(False)
+
+    def save_module(self):
+        module = ModuleDefinition(
+            id=self.id_edit.text().strip(),
+            name=self.name_edit.text().strip(),
+            description=self.description_edit.text().strip(),
+            version=self.version.value(),
+            allowed_purposes=[value for value, widget in self.purposes.items() if widget.isChecked()],
+            allowed_actions=[value for value, widget in self.actions.items() if widget.isChecked()],
+            enabled=self.enabled.isChecked(),
+        )
+        if self.module is not None and self.module.id == module.id:
+            changed = any(
+                (
+                    module.name != self.module.name,
+                    module.description != self.module.description,
+                    module.allowed_purposes != self.module.allowed_purposes,
+                    module.allowed_actions != self.module.allowed_actions,
+                    module.enabled != self.module.enabled,
+                )
+            )
+            if changed and module.version <= self.module.version:
+                module.version = self.module.version + 1
+                self.version.setValue(module.version)
+        errors = module.validate()
+        if errors:
+            QMessageBox.warning(self, "模块规则无效", chr(10).join(errors))
+            return
+        existing = self.registry.get(module.id)
+        if existing is not None and (self.module is None or existing.id != self.module.id):
+            QMessageBox.warning(self, "模块保存失败", f"模块 ID 已存在：{module.id}")
+            return
+        try:
+            self.registry.upsert(module)
+        except Exception as error:
+            QMessageBox.warning(self, "模块保存失败", str(error))
+            return
+        self.module = module
+        self.accept()
+
 class RecordPage(QWidget):
     def __init__(self, app):
         super().__init__()
@@ -580,6 +758,17 @@ class RecordPage(QWidget):
         self.case_name.textEdited.connect(lambda _value: self.app.set_dirty(True))
         self.case_category.textEdited.connect(lambda _value: self.app.set_dirty(True))
         grid.addWidget(self.case_category, 0, 3)
+        grid.addWidget(QLabel("模块"), 1, 0)
+        self.module_combo = QComboBox()
+        self.module_combo.setToolTip("选择此用例所属的功能模块；停用模块不能保存或回放")
+        self.module_combo.currentIndexChanged.connect(lambda _index: self.app.set_dirty(True))
+        grid.addWidget(self.module_combo, 1, 1, 1, 2)
+        self.module_manage = QPushButton("新建/编辑模块")
+        self.module_manage.setProperty("compact", True)
+        self.module_manage.setToolTip("定义自定义模块的用途和允许动作")
+        self.module_manage.clicked.connect(self.manage_modules)
+        grid.addWidget(self.module_manage, 1, 3)
+        self.refresh_module_selection()
         layout.addWidget(metadata)
         self.steps = QTableWidget(0, 4)
         self.steps.setHorizontalHeaderLabels(["#", "名称", "动作", "状态"])
@@ -666,6 +855,45 @@ class RecordPage(QWidget):
         layout.addLayout(actions)
         return pane
 
+    def refresh_module_selection(self, selected_id=None):
+        if not hasattr(self, "module_combo"):
+            return
+        selected_id = selected_id or self.app.document.module_id or "recording"
+        self.module_combo.blockSignals(True)
+        self.module_combo.clear()
+        modules = sorted(
+            self.app.module_registry.modules.values(),
+            key=lambda item: (item.name, item.id),
+        )
+        for module in modules:
+            suffix = "（已停用）" if not module.enabled else ""
+            self.module_combo.addItem(
+                f"{module.name} · {module.id} · v{module.version}{suffix}",
+                module.id,
+            )
+        index = self.module_combo.findData(selected_id)
+        if index < 0:
+            if self.app.document.module_id:
+                self.module_combo.addItem(f"未知模块 · {self.app.document.module_id}", self.app.document.module_id)
+                index = self.module_combo.count() - 1
+            else:
+                index = self.module_combo.findData("recording")
+        if index >= 0:
+            self.module_combo.setCurrentIndex(index)
+        self.module_combo.blockSignals(False)
+
+    def selected_module(self):
+        value = self.module_combo.currentData() if hasattr(self, "module_combo") else None
+        return self.app.module_registry.get(value) if value else None
+
+    def manage_modules(self):
+        selected = self.selected_module()
+        module = None if selected is None or selected.id in self.app.module_registry.builtin_ids else selected
+        dialog = ModuleManagerDialog(self, self.app.module_registry, module)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.refresh_module_selection(dialog.module.id if dialog.module else None)
+            self.app.set_dirty(True)
+
     @staticmethod
     def spin(value):
         widget = QSpinBox()
@@ -684,6 +912,11 @@ class RecordPage(QWidget):
         self.roi_info.setText("未框选")
         self.target_info.setText("未选择")
         self.selection_info.setText("尚未选择识别区域或动作坐标")
+
+    def sync_semantic_context(self):
+        semantic = getattr(self.app, "semantic", None)
+        if semantic is not None and semantic.has_job_context:
+            semantic.load_job_context(self.app.document, self.app.current_path)
 
     def selection_changed(self, kind, value):
         if kind == "roi":
@@ -723,6 +956,7 @@ class RecordPage(QWidget):
         self.app.document.steps.append(step)
         self.refresh_steps(len(self.app.document.steps) - 1)
         self.name.setText(f"步骤 {len(self.app.document.steps) + 1}")
+        self.sync_semantic_context()
         self.app.set_dirty(True)
 
     def update_step(self):
@@ -736,6 +970,7 @@ class RecordPage(QWidget):
             return
         self.app.document.steps[row] = step
         self.refresh_steps(row)
+        self.sync_semantic_context()
         self.app.set_dirty(True)
 
     def delete_step(self):
@@ -743,6 +978,7 @@ class RecordPage(QWidget):
         if row >= 0:
             self.app.document.steps.pop(row)
             self.refresh_steps(min(row, len(self.app.document.steps) - 1))
+            self.sync_semantic_context()
             self.app.set_dirty(True)
 
     def move_step(self, offset):
@@ -751,6 +987,7 @@ class RecordPage(QWidget):
         if row >= 0 and 0 <= target < len(self.app.document.steps):
             self.app.document.steps[row], self.app.document.steps[target] = self.app.document.steps[target], self.app.document.steps[row]
             self.refresh_steps(target)
+            self.sync_semantic_context()
             self.app.set_dirty(True)
 
     def refresh_steps(self, select=-1):
@@ -834,6 +1071,7 @@ class PlaybackPage(QWidget):
     def __init__(self, app):
         super().__init__()
         self.app = app
+        self.library = JobLibrary(JOBS_DIR)
         self.queue = []
         self.runner = MaaJobRunner(
             APP_DIR, ASSETS_DIR, JOBS_DIR,
@@ -1050,7 +1288,7 @@ class PlaybackPage(QWidget):
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            path.unlink()
+            self.library.delete_job(path)
             self.queue = [item for item in self.queue if item.resolve() != path.resolve()]
             self.refresh_queue()
             self.refresh_library()
@@ -1060,7 +1298,7 @@ class PlaybackPage(QWidget):
 
     def add_selected(self):
         path = self.selected_library_path()
-        if path:
+        if path and not any(item.resolve() == path.resolve() for item in self.queue):
             self.queue.append(path)
             self.refresh_queue(len(self.queue) - 1)
 
@@ -1114,7 +1352,7 @@ class PlaybackPage(QWidget):
         self.set_execution_active(True)
         self.set_state("执行中", "running")
         self.progress.setValue(1)
-        queue, serial = list(self.queue), self.app.adb.serial
+        queue, serial = [Path(item).resolve(strict=False) for item in self.queue], self.app.adb.serial
         session = self.app.adb.for_serial(serial)
         retry_failed = self.retry.isChecked()
         capture_failure = self.capture_error.isChecked()
@@ -1136,6 +1374,8 @@ class PlaybackPage(QWidget):
                 capture_failure=(
                     lambda path: self.capture_failure_screen(path, session)
                 ) if capture_failure else None,
+                jobs_dir=JOBS_DIR,
+                module_validate=self.app.module_registry.validate_document,
             )
 
         worker = Worker(operation)
@@ -1189,6 +1429,7 @@ class Workbench(QMainWindow):
         self.adb = AdbClient()
         self.document = JobDocument(name="新用例", category="默认")
         self.current_path = None
+        self.module_registry = ModuleRegistry(MODULES_PATH)
         self.screen_image = None
         self.workers = []
         self.refresh_generation = 0
@@ -1401,7 +1642,8 @@ class Workbench(QMainWindow):
         self.semantic_button.setChecked(index == 2)
         if index == 1:
             self.playback.refresh_library()
-
+        if index == 2:
+            self.semantic.load_job_context(self.document, self.current_path)
     def keep_worker(self, worker):
         self.workers.append(worker)
 
@@ -1503,9 +1745,13 @@ class Workbench(QMainWindow):
         if self.dirty and QMessageBox.question(self, "\u65b0\u5efa\u7528\u4f8b", "\u5f53\u524d\u4fee\u6539\u5c1a\u672a\u4fdd\u5b58\uff0c\u4ecd\u8981\u65b0\u5efa\u5417\uff1f") != QMessageBox.StandardButton.Yes:
             return
         self.document = JobDocument(name="\u65b0\u7528\u4f8b", category="\u9ed8\u8ba4")
+        self.document.module_id = "recording"
+        self.document.module_version = self.module_registry.get("recording").version
+        self.semantic.reset_generated_job()
         self.current_path = None
         self.record.case_name.setText(self.document.name)
         self.record.case_category.setText(self.document.category)
+        self.record.refresh_module_selection(self.document.module_id)
         self.record.refresh_steps()
         self.record.clear_marks()
         self.set_dirty(False)
@@ -1517,41 +1763,58 @@ class Workbench(QMainWindow):
 
     def load_job(self, path):
         try:
-            self.document = JobDocument.load(Path(path))
+            document = JobDocument.load(Path(path))
+            errors = document.validate()
+            errors.extend(self.module_registry.validate_document(document))
+            if errors:
+                raise ValueError("\n".join(errors))
+            self.document = document
             self.current_path = Path(path)
+            self.semantic.load_job_context(self.document, self.current_path)
             self.record.case_name.setText(self.document.name)
             self.record.case_category.setText(self.document.category)
+            self.record.refresh_module_selection(self.document.module_id)
             self.record.refresh_steps(0)
             self.set_dirty(False)
         except Exception as error:
-            QMessageBox.critical(self, "\u6253\u5f00\u5931\u8d25", str(error))
-
+            QMessageBox.critical(self, "打开失败", str(error))
     def save_job(self):
         name = self.record.case_name.text().strip()
-        category = self.record.case_category.text().strip() or "\u9ed8\u8ba4"
+        category = self.record.case_category.text().strip() or "默认"
         if not name:
-            QMessageBox.warning(self, "\u4fdd\u5b58\u7528\u4f8b", "\u8bf7\u5148\u586b\u5199\u7528\u4f8b\u540d\u79f0\u3002")
+            QMessageBox.warning(self, "保存用例", "请先填写用例名称。")
             self.record.case_name.setFocus()
             return
         self.document.name = name
+        selected_module = self.record.selected_module()
+        if selected_module is not None:
+            if self.document.module_id != selected_module.id:
+                self.document.module_id = selected_module.id
+                self.document.module_version = selected_module.version
+            elif not isinstance(self.document.module_version, int) or self.document.module_version < 1:
+                self.document.module_version = selected_module.version
+        elif not self.document.module_id:
+            self.document.module_id = "recording"
+            self.document.module_version = self.module_registry.get("recording").version
         self.document.category = category
         errors = self.document.validate()
+        errors.extend(self.module_registry.validate_document(self.document))
         if errors:
             QMessageBox.warning(self, "用例无法保存", "\n".join(errors))
             return
         path = self.current_path
         if path is None:
-            path = JOBS_DIR / safe_name(category, "\u9ed8\u8ba4") / f"{safe_name(name, 'case')}.maa_job.json"
+            path = JOBS_DIR / safe_name(category, "默认") / f"{safe_name(name, 'case')}.maa_job.json"
         try:
             self.document.save(path)
             self.current_path = path
+            self.semantic.load_job_context(self.document, self.current_path)
             self.set_dirty(False)
             self.playback.refresh_library()
-            self.toast("\u5df2\u4fdd\u5b58\u5230\u7528\u4f8b\u5e93")
-            QMessageBox.information(self, "\u4fdd\u5b58\u6210\u529f", "\u5df2\u4fdd\u5b58\u5230\u7528\u4f8b\u5e93\u3002")
+            self.toast("已保存到用例库")
+            QMessageBox.information(self, "保存成功", "已保存到用例库。")
         except Exception as error:
-            QMessageBox.critical(self, "\u4fdd\u5b58\u5931\u8d25", str(error))
-
+            QMessageBox.critical(self, "保存失败", str(error))
     def export_pipeline(self):
         self.document.name = self.record.case_name.text().strip()
         self.document.category = self.record.case_category.text().strip() or "默认"

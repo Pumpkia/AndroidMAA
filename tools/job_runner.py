@@ -1,4 +1,4 @@
-"""MaaFramework runtime used by the visual job editor."""
+﻿"""MaaFramework runtime used by the visual job editor."""
 
 from __future__ import annotations
 
@@ -95,6 +95,10 @@ class MaaJobRunner:
         self._tasker_sink: EditorTaskerSink | None = None
         self._context_sink: EditorContextSink | None = None
         self._lock = threading.Lock()
+        self._run_lock = threading.Lock()
+        self._run_active = False
+        self._cancel_requested = threading.Event()
+        self.module_validate = None
 
     @property
     def running(self) -> bool:
@@ -137,6 +141,32 @@ class MaaJobRunner:
         return config
 
     def run(self, document: JobDocument, serial: str, emit: LogCallback) -> bool:
+        if not isinstance(serial, str) or not serial.strip():
+            raise ValueError("ADB serial is required")
+        if isinstance(document, JobDocument):
+            prerequisites = document.resolve_prerequisites(self.jobs_dir) if document.prerequisites else []
+            documents = [document, *prerequisites]
+            errors: list[str] = []
+            for item in documents:
+                errors.extend(item.validate())
+                if callable(self.module_validate):
+                    errors.extend(self.module_validate(item) or [])
+            if errors:
+                raise ValueError("\n".join(errors))
+        if not self._run_lock.acquire(blocking=False):
+            raise RuntimeError("A Maa job is already running")
+        with self._lock:
+            self._run_active = True
+            self._cancel_requested.clear()
+        try:
+            return self._run_once(document, serial, emit)
+        finally:
+            with self._lock:
+                self._run_active = False
+                self._cancel_requested.clear()
+            self._run_lock.release()
+
+    def _run_once(self, document: JobDocument, serial: str, emit: LogCallback) -> bool:
         with self._lock:
             if self._tasker and self._tasker.running:
                 raise RuntimeError("已有作业正在执行")
@@ -196,6 +226,10 @@ class MaaJobRunner:
             self._tasker = tasker
             self._tasker_sink = tasker_sink
             self._context_sink = context_sink
+            cancelled = self._cancel_requested.is_set()
+        if cancelled:
+            tasker.post_stop().wait()
+            return False
         try:
             emit(f"执行入口：{entry}")
             job = tasker.post_task(entry, pipeline)
@@ -209,9 +243,17 @@ class MaaJobRunner:
 
     def stop(self, emit: LogCallback) -> bool:
         with self._lock:
+            active = self._run_active
+            if active:
+                self._cancel_requested.set()
             tasker = self._tasker
-        if tasker is None or not tasker.running:
+        if not active:
             return False
+        if tasker is None:
+            emit("Stop requested; waiting for Maa setup to finish")
+            return True
+        if not tasker.running:
+            return True
         emit("正在停止作业…")
         tasker.post_stop().wait()
         return True

@@ -442,6 +442,29 @@ class WorkbenchCaptureAndRaceTests(unittest.TestCase):
         finally:
             self.close_window(window)
 
+    def test_record_module_selection_is_saved_with_document(self):
+        window = self.make_window()
+        try:
+            module_ids = {
+                window.record.module_combo.itemData(index)
+                for index in range(window.record.module_combo.count())
+            }
+            self.assertTrue({"recording", "semantic", "custom"} <= module_ids)
+            window.record.module_combo.setCurrentIndex(
+                window.record.module_combo.findData("semantic")
+            )
+            window.record.case_name.setText("语义关联")
+            with tempfile.TemporaryDirectory() as directory, patch(
+                "qt_workbench.QMessageBox.information"
+            ):
+                window.current_path = Path(directory) / "bound.maa_job.json"
+                window.save_job()
+                loaded = JobDocument.load(window.current_path)
+            self.assertEqual(loaded.module_id, "semantic")
+            self.assertEqual(loaded.module_version, 1)
+        finally:
+            self.close_window(window)
+
     def test_capture_discards_result_after_device_switch(self):
         window = self.make_window()
         raw = np.zeros((2400, 1080, 3), dtype=np.uint8)

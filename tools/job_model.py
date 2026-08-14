@@ -18,9 +18,9 @@ SUPPORTED_SEMANTIC_PURPOSES = {"click", "check", "recognize"}
 
 def _is_rectangle(value: list[int] | None) -> bool:
     return bool(
-        value
+        isinstance(value, list)
         and len(value) == 4
-        and all(isinstance(item, int) for item in value)
+        and all(isinstance(item, int) and not isinstance(item, bool) for item in value)
         and value[0] >= 0
         and value[1] >= 0
         and value[2] > 0
@@ -30,9 +30,9 @@ def _is_rectangle(value: list[int] | None) -> bool:
 
 def _is_ratio_rectangle(value: list[float] | None) -> bool:
     return bool(
-        value
+        isinstance(value, list)
         and len(value) == 4
-        and all(isinstance(item, (int, float)) for item in value)
+        and all(isinstance(item, (int, float)) and not isinstance(item, bool) for item in value)
         and all(0 <= float(item) <= 1 for item in value)
         and float(value[0]) < float(value[2])
         and float(value[1]) < float(value[3])
@@ -41,10 +41,18 @@ def _is_ratio_rectangle(value: list[float] | None) -> bool:
 
 def _is_device_size(value: list[int] | None) -> bool:
     return bool(
-        value
+        isinstance(value, list)
         and len(value) == 2
-        and all(isinstance(item, int) and item > 0 for item in value)
+        and all(isinstance(item, int) and not isinstance(item, bool) and item > 0 for item in value)
     )
+
+
+def _is_point_or_rectangle(value: list[int] | None) -> bool:
+    if not isinstance(value, list):
+        return False
+    if len(value) == 2:
+        return all(isinstance(item, int) and not isinstance(item, bool) and item >= 0 for item in value)
+    return _is_rectangle(value)
 
 
 def ratio_to_rect(ratio: list[float], device_size: list[int]) -> list[int]:
@@ -81,6 +89,7 @@ def safe_name(value: str, fallback: str = "job") -> str:
     cleaned = re.sub(r"[^0-9A-Za-z_\-\u4e00-\u9fff]+", "_", value.strip())
     return cleaned.strip("_") or fallback
 
+
 SMART_CATEGORIES = (
     "账号与登录",
     "消息与社交",
@@ -106,6 +115,7 @@ def suggest_category(name: str, steps: list["JobStep"]) -> str:
         return "表单输入"
     return "通用流程"
 
+
 @dataclass
 class JobStep:
     name: str
@@ -128,18 +138,23 @@ class JobStep:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "JobStep":
+        if not isinstance(data, dict):
+            raise ValueError("步骤定义必须是对象")
         fields = cls.__dataclass_fields__
         return cls(**{key: value for key, value in data.items() if key in fields})
 
     def validate(self) -> list[str]:
         errors: list[str] = []
-        if not self.name.strip():
+        if not isinstance(self.name, str) or not self.name.strip():
             errors.append("步骤名称不能为空")
-        if self.recognition not in SUPPORTED_RECOGNITIONS:
+        if not isinstance(self.recognition, str) or self.recognition not in SUPPORTED_RECOGNITIONS:
             errors.append(f"不支持的识别类型: {self.recognition}")
-        if self.action not in SUPPORTED_ACTIONS:
+        if not isinstance(self.action, str) or self.action not in SUPPORTED_ACTIONS:
             errors.append(f"不支持的动作类型: {self.action}")
-        if self.semantic_purpose and self.semantic_purpose not in SUPPORTED_SEMANTIC_PURPOSES:
+        if self.semantic_purpose and (
+            not isinstance(self.semantic_purpose, str)
+            or self.semantic_purpose not in SUPPORTED_SEMANTIC_PURPOSES
+        ):
             errors.append(
                 f"不支持的语义用途: {self.semantic_purpose}，"
                 "仅支持 click、check、recognize"
@@ -164,19 +179,42 @@ class JobStep:
             errors.append(
                 "target_ratio must be [left, top, right, bottom] within 0..1"
             )
-        if self.recognition == "TemplateMatch" and not self.template:
+        if self.roi is not None and not _is_rectangle(self.roi):
+            errors.append("ROI 必须是 [x, y, width, height] 坐标区域")
+        if (
+            self.recognition == "TemplateMatch"
+            and (not isinstance(self.template, str) or not self.template.strip())
+        ):
             errors.append("模板匹配步骤必须包含模板图片")
-        if self.recognition == "OCR" and not self.expected.strip():
+        if (
+            self.recognition == "OCR"
+            and (not isinstance(self.expected, str) or not self.expected.strip())
+        ):
             errors.append("OCR 步骤必须填写期望文字")
-        if self.action == "Click" and self.recognition == "DirectHit" and not self.target:
+        if (
+            self.action == "Click"
+            and self.recognition == "DirectHit"
+            and not _is_point_or_rectangle(self.target)
+        ):
             errors.append("直接点击步骤必须选择点击坐标")
-        if self.action == "Swipe" and (not self.target or not self.swipe_end):
+        if self.action == "Swipe" and (
+            not _is_point_or_rectangle(self.target) or not _is_point_or_rectangle(self.swipe_end)
+        ):
             errors.append("滑动步骤必须选择起点和终点")
-        if self.action == "InputText" and not self.input_text:
+        if self.action == "InputText" and (
+            not isinstance(self.input_text, str) or not self.input_text
+        ):
             errors.append("输入文本步骤不能为空")
-        if not 0 <= self.threshold <= 1:
+        if (
+            not isinstance(self.threshold, (int, float))
+            or isinstance(self.threshold, bool)
+            or not 0 <= self.threshold <= 1
+        ):
             errors.append("匹配阈值必须在 0 到 1 之间")
-        if self.duration < 0 or self.pre_delay < 0 or self.post_delay < 0:
+        if any(
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+            for value in (self.duration, self.pre_delay, self.post_delay)
+        ):
             errors.append("持续时间和步骤延迟不能为负数")
         return errors
 
@@ -245,19 +283,31 @@ class JobDocument:
     prerequisites: list[str] = field(default_factory=list)
     device_size: list[int] = field(default_factory=lambda: [720, 1600])
     steps: list[JobStep] = field(default_factory=list)
+    module_id: str = ""
+    module_version: int = 1
 
     @classmethod
     def load(cls, path: Path) -> "JobDocument":
         with path.open("r", encoding="utf-8") as stream:
             data = json.load(stream)
+        if not isinstance(data, dict):
+            raise ValueError("作业文件顶层必须是对象")
         if data.get("format_version") not in SUPPORTED_FORMAT_VERSIONS:
             raise ValueError("不支持的作业文件版本")
+        prerequisites = data.get("prerequisites", [])
+        if not isinstance(prerequisites, list) or any(not isinstance(item, str) for item in prerequisites):
+            raise ValueError("prerequisites 必须是字符串数组")
+        steps = data.get("steps", [])
+        if not isinstance(steps, list):
+            raise ValueError("steps 必须是数组")
         return cls(
             name=data.get("name", "QQ作业"),
             category=data.get("category", "默认"),
-            prerequisites=data.get("prerequisites", []),
+            prerequisites=prerequisites,
             device_size=data.get("device_size", [720, 1600]),
-            steps=[JobStep.from_dict(item) for item in data.get("steps", [])],
+            steps=[JobStep.from_dict(item) for item in steps],
+            module_id=data.get("module_id", ""),
+            module_version=data.get("module_version", 1),
         )
 
     def save(self, path: Path) -> None:
@@ -265,6 +315,8 @@ class JobDocument:
         payload = {
             "format_version": JOB_FORMAT_VERSION,
             "name": self.name,
+            "module_id": self.module_id,
+            "module_version": self.module_version,
             "category": self.category,
             "prerequisites": self.prerequisites,
             "device_size": self.device_size,
@@ -276,17 +328,41 @@ class JobDocument:
 
     def validate(self) -> list[str]:
         errors: list[str] = []
-        if not self.name.strip():
+        if not isinstance(self.module_id, str):
+            errors.append("模块 ID 必须是字符串")
+        elif self.module_id and not re.fullmatch(r"[a-z][a-z0-9_-]{1,63}", self.module_id):
+            errors.append("模块 ID 格式无效")
+        if (
+            not isinstance(self.module_version, int)
+            or isinstance(self.module_version, bool)
+            or self.module_version < 1
+        ):
+            errors.append("模块版本必须是正整数")
+        if not isinstance(self.name, str) or not self.name.strip():
             errors.append("作业名称不能为空")
-        if not self.category.strip():
+        if not isinstance(self.category, str) or not self.category.strip():
             errors.append("作业分类不能为空")
-        if len(self.prerequisites) != len(set(self.prerequisites)):
+        if (
+            not isinstance(self.prerequisites, list)
+            or any(not isinstance(item, str) for item in self.prerequisites)
+        ):
+            errors.append("前置用例必须是字符串数组")
+        elif len(self.prerequisites) != len(set(self.prerequisites)):
             errors.append("前置用例不能重复")
+        if not _is_device_size(self.device_size):
+            errors.append("设备尺寸必须是 [宽, 高] 正整数数组")
+        if not isinstance(self.steps, list):
+            errors.append("步骤必须是数组")
+            return errors
         seen: set[str] = set()
         for index, step in enumerate(self.steps, start=1):
-            if step.name in seen:
+            if not isinstance(step, JobStep):
+                errors.append(f"第 {index} 步定义必须是 JobStep")
+                continue
+            if isinstance(step.name, str) and step.name in seen:
                 errors.append(f"第 {index} 步名称重复: {step.name}")
-            seen.add(step.name)
+            if isinstance(step.name, str):
+                seen.add(step.name)
             errors.extend(f"第 {index} 步: {message}" for message in step.validate())
         return errors
 
