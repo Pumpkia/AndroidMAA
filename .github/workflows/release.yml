@@ -57,16 +57,19 @@ jobs:
           "path=$isccPath" >> $env:GITHUB_OUTPUT
 
       - name: Build Windows package
-        id: build
         shell: pwsh
-        continue-on-error: true
         run: |
           $ErrorActionPreference = "Stop"
-          .\tools\build_release.ps1 -Version "$env:VERSION" -IsccPath "${{ steps.inno.outputs.path }}"
-          Get-ChildItem -LiteralPath release -File | Sort-Object Name | Format-Table Name,Length
+          try {
+            .\tools\build_release.ps1 -Version "$env:VERSION" -IsccPath "${{ steps.inno.outputs.path }}"
+            Get-ChildItem -LiteralPath release -File | Sort-Object Name | Format-Table Name,Length
+          }
+          catch {
+            Write-Host "::error title=Windows package build failed::$($_.Exception.Message)"
+            throw
+          }
 
       - name: Upload Windows artifact
-        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: Qdd-${{ env.VERSION }}-win-x64
@@ -85,11 +88,6 @@ jobs:
             .packaging-build/work/**/warn-*.txt
             .packaging-build/work/**/xref-*.html
             .packaging-build/**/*.log
-
-      - name: Fail if Windows package build failed
-        if: steps.build.outcome != 'success'
-        shell: pwsh
-        run: exit 1
 
   github_release:
     name: Publish GitHub Release

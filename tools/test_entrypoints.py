@@ -173,7 +173,8 @@ class EntrypointContractTests(unittest.TestCase):
         self.assertIn("Locate Inno Setup", workflow)
         self.assertIn("steps.inno.outputs.path", workflow)
         self.assertIn("Upload Windows diagnostics", workflow)
-        self.assertIn("Fail if Windows package build failed", workflow)
+        self.assertIn("Windows package build failed", workflow)
+        self.assertNotIn("continue-on-error", workflow)
         self.assertIn("release/*.zip", workflow)
         self.assertIn("release/Qdd-*-setup.exe", workflow)
 
