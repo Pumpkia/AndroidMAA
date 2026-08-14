@@ -24,6 +24,10 @@ def write_file(path: Path, content: str = "data") -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def normalized(path: Path) -> Path:
+    return app_paths._normalized_path(path)
+
+
 class PathResolutionTests(unittest.TestCase):
     def test_source_mode_keeps_project_layout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -36,7 +40,7 @@ class PathResolutionTests(unittest.TestCase):
             )
 
             self.assertTrue(paths.portable)
-            self.assertEqual(paths.app_dir, app_dir.resolve())
+            self.assertEqual(paths.app_dir, normalized(app_dir))
             self.assertEqual(paths.assets_dir, paths.app_dir / "assets")
             self.assertEqual(paths.data_dir, paths.app_dir)
             self.assertEqual(paths.jobs_dir, paths.app_dir / "jobs")
@@ -60,13 +64,13 @@ class PathResolutionTests(unittest.TestCase):
             )
 
             self.assertTrue(paths.portable)
-            self.assertEqual(paths.data_dir, app_dir.resolve())
-            self.assertEqual(paths.jobs_dir, app_dir.resolve() / "jobs")
+            self.assertEqual(paths.data_dir, normalized(app_dir))
+            self.assertEqual(paths.jobs_dir, normalized(app_dir) / "jobs")
             self.assertEqual(
                 paths.template_dir,
-                app_dir.resolve() / "assets" / "resource" / "image" / "jobs",
+                normalized(app_dir) / "assets" / "resource" / "image" / "jobs",
             )
-            self.assertEqual(paths.exports_dir, app_dir.resolve() / "exports")
+            self.assertEqual(paths.exports_dir, normalized(app_dir) / "exports")
 
     def test_windows_frozen_install_uses_local_app_data(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -80,9 +84,9 @@ class PathResolutionTests(unittest.TestCase):
                 environ={"LOCALAPPDATA": str(local)},
             )
 
-            data_dir = local.resolve() / "Qdd"
+            data_dir = normalized(local) / "Qdd"
             self.assertFalse(paths.portable)
-            self.assertEqual(paths.assets_dir, app_dir.resolve() / "assets")
+            self.assertEqual(paths.assets_dir, normalized(app_dir) / "assets")
             self.assertEqual(paths.data_dir, data_dir)
             self.assertEqual(paths.jobs_dir, data_dir / "jobs")
             self.assertEqual(paths.user_resource_dir, data_dir / "resource")
@@ -107,7 +111,7 @@ class PathResolutionTests(unittest.TestCase):
 
             self.assertEqual(
                 paths.data_dir,
-                home.resolve() / "AppData" / "Local" / "Qdd",
+                normalized(home) / "AppData" / "Local" / "Qdd",
             )
 
     def test_data_dir_override_has_priority_and_uses_installed_layout(self):
@@ -127,12 +131,12 @@ class PathResolutionTests(unittest.TestCase):
             )
 
             self.assertFalse(paths.portable)
-            self.assertEqual(paths.data_dir, override.resolve())
+            self.assertEqual(paths.data_dir, normalized(override))
             self.assertEqual(
                 paths.template_dir,
-                override.resolve() / "resource" / "image" / "jobs",
+                normalized(override) / "resource" / "image" / "jobs",
             )
-            self.assertEqual(paths.exports_dir, override.resolve() / "exports")
+            self.assertEqual(paths.exports_dir, normalized(override) / "exports")
 
     def test_other_frozen_platform_keeps_existing_app_layout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -145,10 +149,10 @@ class PathResolutionTests(unittest.TestCase):
             )
 
             self.assertTrue(paths.portable)
-            self.assertEqual(paths.data_dir, app_dir.resolve())
+            self.assertEqual(paths.data_dir, normalized(app_dir))
             self.assertEqual(
                 paths.exports_dir,
-                app_dir.resolve() / "assets" / "resource" / "pipeline",
+                normalized(app_dir) / "assets" / "resource" / "pipeline",
             )
 
 
