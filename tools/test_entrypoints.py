@@ -162,6 +162,8 @@ class EntrypointContractTests(unittest.TestCase):
 
         self.assertIn("[string]$IsccPath", script)
         self.assertIn("function Resolve-IsccPath", script)
+        self.assertIn("[switch]$SkipChecks", script)
+        self.assertIn("if (-not $SkipChecks)", script)
         self.assertIn('Get-Command -Name "ISCC.exe"', script)
         self.assertIn(r'Inno Setup 6\ISCC.exe', script)
         self.assertIn("Install Inno Setup 6 or pass -IsccPath", script)
@@ -170,8 +172,11 @@ class EntrypointContractTests(unittest.TestCase):
         self.assertIn('Write-Output "Installer: $setupPath"', script)
 
         self.assertIn("choco install innosetup", workflow)
+        self.assertIn("Validate schemas", workflow)
+        self.assertIn("Run unit tests", workflow)
         self.assertIn("Locate Inno Setup", workflow)
         self.assertIn("steps.inno.outputs.path", workflow)
+        self.assertIn("-SkipChecks", workflow)
         self.assertIn("Upload Windows diagnostics", workflow)
         self.assertIn("Windows package build failed", workflow)
         self.assertNotIn("continue-on-error", workflow)

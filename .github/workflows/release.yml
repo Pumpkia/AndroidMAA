@@ -37,6 +37,34 @@ jobs:
         shell: pwsh
         run: choco install innosetup --no-progress --yes
 
+      - name: Validate schemas
+        shell: pwsh
+        run: python tools\validate_schema.py
+
+      - name: Run unit tests
+        shell: pwsh
+        run: |
+          $originalQtPlatform = $env:QT_QPA_PLATFORM
+          try {
+            $env:QT_QPA_PLATFORM = "offscreen"
+            $output = & python -m unittest discover -s tools -p "test_*.py" 2>&1
+            $exitCode = $LASTEXITCODE
+            $output | ForEach-Object { Write-Host $_ }
+            if ($exitCode -ne 0) {
+              $message = ($output | Select-Object -Last 40) -join "%0A"
+              Write-Host "::error title=Unit tests failed::$message"
+              exit $exitCode
+            }
+          }
+          finally {
+            if ($null -eq $originalQtPlatform) {
+              Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+            }
+            else {
+              $env:QT_QPA_PLATFORM = $originalQtPlatform
+            }
+          }
+
       - name: Locate Inno Setup
         id: inno
         shell: pwsh
@@ -61,7 +89,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           try {
-            .\tools\build_release.ps1 -Version "$env:VERSION" -IsccPath "${{ steps.inno.outputs.path }}"
+            .\tools\build_release.ps1 -Version "$env:VERSION" -IsccPath "${{ steps.inno.outputs.path }}" -SkipChecks
             Get-ChildItem -LiteralPath release -File | Sort-Object Name | Format-Table Name,Length
           }
           catch {
