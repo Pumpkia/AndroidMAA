@@ -170,7 +170,10 @@ class EntrypointContractTests(unittest.TestCase):
         self.assertIn('Write-Output "Installer: $setupPath"', script)
 
         self.assertIn("choco install innosetup", workflow)
-        self.assertIn("-IsccPath $isccPath", workflow)
+        self.assertIn("Locate Inno Setup", workflow)
+        self.assertIn("steps.inno.outputs.path", workflow)
+        self.assertIn("Upload Windows diagnostics", workflow)
+        self.assertIn("Fail if Windows package build failed", workflow)
         self.assertIn("release/*.zip", workflow)
         self.assertIn("release/Qdd-*-setup.exe", workflow)
 

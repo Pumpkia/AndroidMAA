@@ -37,19 +37,59 @@ jobs:
         shell: pwsh
         run: choco install innosetup --no-progress --yes
 
-      - name: Build Windows package
+      - name: Locate Inno Setup
+        id: inno
         shell: pwsh
         run: |
-          $isccPath = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
-          .\tools\build_release.ps1 -Version "$env:VERSION" -IsccPath $isccPath
+          $candidates = @(
+            (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+            (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
+          )
+          $isccPath = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if (-not $isccPath) {
+            Write-Host "Installed Chocolatey packages:"
+            choco list --local-only
+            Write-Host "Program Files (x86):"
+            Get-ChildItem -LiteralPath ${env:ProgramFiles(x86)} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+            throw "ISCC.exe was not found after installing Inno Setup."
+          }
+          Write-Host "Using Inno Setup compiler: $isccPath"
+          "path=$isccPath" >> $env:GITHUB_OUTPUT
+
+      - name: Build Windows package
+        id: build
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\tools\build_release.ps1 -Version "$env:VERSION" -IsccPath "${{ steps.inno.outputs.path }}"
+          Get-ChildItem -LiteralPath release -File | Sort-Object Name | Format-Table Name,Length
 
       - name: Upload Windows artifact
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: Qdd-${{ env.VERSION }}-win-x64
           path: |
             release/*.zip
             release/Qdd-*-setup.exe
+
+      - name: Upload Windows diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Qdd-${{ env.VERSION }}-windows-diagnostics
+          if-no-files-found: ignore
+          path: |
+            release/*
+            .packaging-build/work/**/warn-*.txt
+            .packaging-build/work/**/xref-*.html
+            .packaging-build/**/*.log
+
+      - name: Fail if Windows package build failed
+        if: steps.build.outcome != 'success'
+        shell: pwsh
+        run: exit 1
 
   github_release:
     name: Publish GitHub Release
