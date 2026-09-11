@@ -219,9 +219,9 @@ class VisualSystemTests(unittest.TestCase):
             window = Workbench()
 
         try:
-            self.assertEqual(window.windowTitle(), "\u81ea\u52a8\u5316\u7528\u4f8b\u5de5\u4f5c\u53f0")
+            self.assertEqual(window.windowTitle(), "奇迹暖暖自动化工作台")
             window.set_dirty(True)
-            self.assertEqual(window.windowTitle(), "\u81ea\u52a8\u5316\u7528\u4f8b\u5de5\u4f5c\u53f0 *")
+            self.assertEqual(window.windowTitle(), "奇迹暖暖自动化工作台 *")
             window.set_dirty(False)
             self.assertIsNotNone(window.findChild(QFrame, "modeSwitcher"))
             self.assertIn("#0066CC", window.styleSheet())
@@ -244,7 +244,12 @@ class VisualSystemTests(unittest.TestCase):
                 all(table.alternatingRowColors() for table in window.findChildren(QTableWidget))
             )
             for index, expected in enumerate(
-                ((True, False, False), (False, True, False), (False, False, True))
+                (
+                    (True, False, False, False),
+                    (False, True, False, False),
+                    (False, False, True, False),
+                    (False, False, False, True),
+                )
             ):
                 window.switch_page(index)
                 self.assertEqual(
@@ -252,6 +257,7 @@ class VisualSystemTests(unittest.TestCase):
                         window.record_button.isChecked(),
                         window.play_button.isChecked(),
                         window.semantic_button.isChecked(),
+                        window.asset_button.isChecked(),
                     ),
                     expected,
                 )
@@ -722,6 +728,7 @@ class UserDataLayoutTests(unittest.TestCase):
                 jobs_dir=data_dir / "jobs",
                 user_resource_dir=user_resource_dir,
                 template_dir=user_resource_dir / "image" / "jobs",
+                game_asset_dir=user_resource_dir / "image" / "assets",
                 logs_dir=data_dir / "logs",
                 exports_dir=data_dir / "exports",
                 portable=False,

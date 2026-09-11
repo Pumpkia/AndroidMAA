@@ -1,4 +1,4 @@
-"""Data model and Maa Pipeline exporter for QQ App jobs."""
+"""Data model and Maa Pipeline exporter for 奇迹暖暖 jobs."""
 
 from __future__ import annotations
 
@@ -91,10 +91,11 @@ def safe_name(value: str, fallback: str = "job") -> str:
 
 
 SMART_CATEGORIES = (
-    "账号与登录",
-    "消息与社交",
-    "设置与权限",
-    "支付与钱包",
+    "登录与大厅",
+    "日常与签到",
+    "关卡与搭配",
+    "衣橱与资产",
+    "商城与抽卡",
     "表单输入",
     "通用流程",
 )
@@ -103,10 +104,11 @@ SMART_CATEGORIES = (
 def suggest_category(name: str, steps: list["JobStep"]) -> str:
     content = " ".join([name, *(step.name for step in steps), *(step.expected for step in steps)])
     rules = (
-        ("账号与登录", ("登录", "账号", "密码", "验证码", "注册", "切换账号")),
-        ("消息与社交", ("消息", "聊天", "好友", "群", "联系人", "发送")),
-        ("设置与权限", ("设置", "权限", "隐私", "通知", "安全", "开关")),
-        ("支付与钱包", ("支付", "钱包", "红包", "转账", "收款")),
+        ("登录与大厅", ("登录", "大厅", "主界面", "启动", "暖暖")),
+        ("日常与签到", ("签到", "日常", "体力", "领取", "奖励")),
+        ("关卡与搭配", ("关卡", "搭配", "竞技", "少女级", "公主级", "比赛")),
+        ("衣橱与资产", ("衣橱", "资产", "衣服", "发型", "妆容", "连衣裙")),
+        ("商城与抽卡", ("商城", "抽卡", "商店", "钻石", "水晶")),
     )
     for category, keywords in rules:
         if any(keyword in content for keyword in keywords):
@@ -278,7 +280,7 @@ class JobStep:
 
 @dataclass
 class JobDocument:
-    name: str = "QQ作业"
+    name: str = "奇迹暖暖作业"
     category: str = "默认"
     prerequisites: list[str] = field(default_factory=list)
     device_size: list[int] = field(default_factory=lambda: [720, 1600])
@@ -301,7 +303,7 @@ class JobDocument:
         if not isinstance(steps, list):
             raise ValueError("steps 必须是数组")
         return cls(
-            name=data.get("name", "QQ作业"),
+            name=data.get("name", "奇迹暖暖作业"),
             category=data.get("category", "默认"),
             prerequisites=prerequisites,
             device_size=data.get("device_size", [720, 1600]),
@@ -410,7 +412,7 @@ class JobDocument:
         if all_errors:
             raise ValueError("\n".join(all_errors))
 
-        entry_name = safe_name(self.name, "QQJob")
+        entry_name = safe_name(self.name, "NikkiJob")
         named_steps: list[tuple[str, JobStep, list[int]]] = []
         names = {entry_name}
         for document in documents:

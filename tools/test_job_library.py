@@ -23,7 +23,7 @@ class JobLibraryTests(unittest.TestCase):
         self,
         relative_path: str,
         *,
-        name: str = "QQ作业",
+        name: str = "奇迹暖暖作业",
         category: str = "默认",
         prerequisites: list[str] | None = None,
     ) -> Path:
@@ -39,7 +39,7 @@ class JobLibraryTests(unittest.TestCase):
     def test_lists_empty_and_populated_categories(self):
         self.library.create_category("空分类")
         self.library.create_category("通用流程")
-        self.save_job(f"通用流程/QQ作业{JOB_FILE_SUFFIX}", category="通用流程")
+        self.save_job(f"通用流程/奇迹暖暖作业{JOB_FILE_SUFFIX}", category="通用流程")
 
         categories = self.library.list_categories()
 

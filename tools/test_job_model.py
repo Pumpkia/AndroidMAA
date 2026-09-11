@@ -368,12 +368,12 @@ class JobModelTests(unittest.TestCase):
 
 
     def test_suggest_category_uses_job_content(self):
-        self.assertEqual(suggest_category("QQ 登录", []), "账号与登录")
+        self.assertEqual(suggest_category("奇迹暖暖登录", []), "登录与大厅")
         self.assertEqual(
             suggest_category("资料", [JobStep(name="输入昵称", action="InputText", input_text="小明")]),
             "表单输入",
         )
-        self.assertEqual(suggest_category("每日签到", []), "通用流程")
+        self.assertEqual(suggest_category("每日签到", []), "日常与签到")
 
 
 if __name__ == "__main__":

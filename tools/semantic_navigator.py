@@ -93,6 +93,7 @@ class UiNode:
     bounds: tuple[int, int, int, int]
     clickable: bool = False
     action_bounds: tuple[int, int, int, int] | None = None
+    checked: bool = False
 
     @property
     def center(self) -> tuple[int, int]:
@@ -156,6 +157,10 @@ def parse_ui_snapshot(payload: bytes | str) -> UiSnapshot:
         bounds = parse_bounds(element.attrib.get("bounds", ""))
         enabled = element.attrib.get("enabled", "true") != "false"
         clickable = element.attrib.get("clickable", "false") == "true"
+        checked = (
+            element.attrib.get("checked", "false") == "true"
+            or element.attrib.get("selected", "false") == "true"
+        )
         action_bounds = inherited_action_bounds
         if bounds:
             _left, _top, right, bottom = bounds
@@ -183,6 +188,7 @@ def parse_ui_snapshot(payload: bytes | str) -> UiSnapshot:
                         bounds=bounds,
                         clickable=clickable,
                         action_bounds=resolved_action_bounds,
+                        checked=checked,
                     ))
         for child in element:
             visit(child, action_bounds)

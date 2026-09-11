@@ -31,6 +31,14 @@ class ModuleModelTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 registry.upsert(ModuleDefinition(id="semantic", name="替换"))
 
+    def test_assets_builtin_module_is_available(self):
+        registry = ModuleRegistry(Path("does-not-exist/modules.json"))
+        module = registry.get("assets")
+        self.assertIsNotNone(module)
+        self.assertEqual(module.name, "资产")
+        self.assertIn("Click", module.allowed_actions)
+        self.assertTrue(any(item.id == "assets" for item in registry.list()))
+
     def test_invalid_definition_is_rejected(self):
         module = ModuleDefinition(id="Bad ID", name="")
         errors = module.validate()

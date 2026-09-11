@@ -211,7 +211,7 @@ class MaaJobRunner:
             prerequisites,
             runtime_device_size=runtime_device_size,
         )
-        entry = safe_name(document.name, "QQJob")
+        entry = safe_name(document.name, "NikkiJob")
 
         tasker = Tasker()
         tasker_sink = EditorTaskerSink(emit)

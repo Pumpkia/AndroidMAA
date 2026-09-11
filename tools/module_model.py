@@ -100,6 +100,13 @@ BUILTIN_MODULES = (
         allowed_purposes=["click", "check", "recognize"],
         allowed_actions=["Click", "DoNothing"],
     ),
+    ModuleDefinition(
+        "assets",
+        "资产",
+        "奇迹暖暖衣橱分类、模板图与界面资源",
+        allowed_purposes=["click", "check", "recognize"],
+        allowed_actions=["Click", "Swipe", "DoNothing"],
+    ),
     ModuleDefinition("custom", "自定义模块", "由用户定义用途和动作边界"),
 )
 

@@ -48,6 +48,10 @@ class PathResolutionTests(unittest.TestCase):
                 paths.template_dir,
                 paths.app_dir / "assets" / "resource" / "image" / "jobs",
             )
+            self.assertEqual(
+                paths.game_asset_dir,
+                paths.app_dir / "assets" / "resource" / "image" / "assets",
+            )
             self.assertEqual(paths.logs_dir, paths.app_dir / "logs")
             self.assertEqual(paths.exports_dir, paths.app_dir / "exports")
 
@@ -69,6 +73,10 @@ class PathResolutionTests(unittest.TestCase):
             self.assertEqual(
                 paths.template_dir,
                 normalized(app_dir) / "assets" / "resource" / "image" / "jobs",
+            )
+            self.assertEqual(
+                paths.game_asset_dir,
+                normalized(app_dir) / "assets" / "resource" / "image" / "assets",
             )
             self.assertEqual(paths.exports_dir, normalized(app_dir) / "exports")
 
@@ -93,6 +101,10 @@ class PathResolutionTests(unittest.TestCase):
             self.assertEqual(
                 paths.template_dir,
                 data_dir / "resource" / "image" / "jobs",
+            )
+            self.assertEqual(
+                paths.game_asset_dir,
+                data_dir / "resource" / "image" / "assets",
             )
             self.assertEqual(paths.logs_dir, data_dir / "logs")
             self.assertEqual(paths.exports_dir, data_dir / "exports")
@@ -135,6 +147,10 @@ class PathResolutionTests(unittest.TestCase):
             self.assertEqual(
                 paths.template_dir,
                 normalized(override) / "resource" / "image" / "jobs",
+            )
+            self.assertEqual(
+                paths.game_asset_dir,
+                normalized(override) / "resource" / "image" / "assets",
             )
             self.assertEqual(paths.exports_dir, normalized(override) / "exports")
 
@@ -447,6 +463,7 @@ class LayoutInitializationTests(unittest.TestCase):
             self.assertFalse(result.marker_path.exists())
             self.assertTrue(paths.jobs_dir.is_dir())
             self.assertTrue(paths.template_dir.is_dir())
+            self.assertTrue(paths.game_asset_dir.is_dir())
             self.assertTrue(paths.logs_dir.is_dir())
             self.assertTrue(paths.exports_dir.is_dir())
 

@@ -26,6 +26,7 @@ from app_paths import APP_PATHS, initialize_data_layout
 from job_library import JobLibrary
 from job_model import JobDocument, JobStep, safe_name
 from job_runner import MaaJobRunner
+from asset_page import AssetPage
 from module_model import ModuleDefinition, ModuleRegistry
 from semantic_navigator import SemanticNavigatorPage
 
@@ -584,7 +585,7 @@ class ModuleManagerDialog(QDialog):
         self.setWindowTitle("自定义模块")
         self.setMinimumWidth(520)
         self.id_edit = QLineEdit(module.id if module else "")
-        self.id_edit.setPlaceholderText("小写字母开头，例如 qq_login")
+        self.id_edit.setPlaceholderText("小写字母开头，例如 nikki_daily")
         self.name_edit = QLineEdit(module.name if module else "")
         self.description_edit = QLineEdit(module.description if module else "")
         self.version = QSpinBox()
@@ -1449,9 +1450,11 @@ class Workbench(QMainWindow):
         self.record = RecordPage(self)
         self.playback = PlaybackPage(self)
         self.semantic = SemanticNavigatorPage(self, JOBS_DIR / "semantic_map.json")
+        self.assets = AssetPage(self, APP_PATHS.game_asset_dir, JOBS_DIR / "clothing_memory.json")
         self.pages.addWidget(self.record)
         self.pages.addWidget(self.playback)
         self.pages.addWidget(self.semantic)
+        self.pages.addWidget(self.assets)
         root.addWidget(self.pages, 1)
         root.addWidget(self.build_statusbar())
         self.setCentralWidget(central)
@@ -1495,6 +1498,11 @@ class Workbench(QMainWindow):
         self.semantic_button.setProperty("modeButton", True)
         self.semantic_button.clicked.connect(lambda: self.switch_page(2))
         mode_layout.addWidget(self.semantic_button)
+        self.asset_button = QPushButton("资产")
+        self.asset_button.setCheckable(True)
+        self.asset_button.setProperty("modeButton", True)
+        self.asset_button.clicked.connect(lambda: self.switch_page(3))
+        mode_layout.addWidget(self.asset_button)
         layout.addWidget(modes)
         layout.addStretch()
         label = QLabel("ADB 设备")
@@ -1606,6 +1614,7 @@ class Workbench(QMainWindow):
             ("Ctrl+1", lambda: self.switch_page(0)),
             ("Ctrl+2", lambda: self.switch_page(1)),
             ("Ctrl+3", lambda: self.switch_page(2)),
+            ("Ctrl+4", lambda: self.switch_page(3)),
             ("Ctrl+S", self.save_job),
             ("Ctrl+O", self.open_job),
         )
@@ -1625,10 +1634,12 @@ class Workbench(QMainWindow):
         self.record_button.setEnabled(not active)
         self.play_button.setEnabled(not active)
         self.semantic_button.setEnabled(not active)
+        self.asset_button.setEnabled(not active)
         self.devices.setEnabled(not active)
         self.refresh_devices_button.setEnabled(not active)
         self.screenshot_button.setEnabled(not active)
         self.record.setEnabled(not active)
+        self.assets.setEnabled(not active)
         for shortcut in self.idle_shortcuts:
             shortcut.setEnabled(not active)
         self.playback.device.setEnabled(not active)
@@ -1640,10 +1651,13 @@ class Workbench(QMainWindow):
         self.record_button.setChecked(index == 0)
         self.play_button.setChecked(index == 1)
         self.semantic_button.setChecked(index == 2)
+        self.asset_button.setChecked(index == 3)
         if index == 1:
             self.playback.refresh_library()
         if index == 2:
             self.semantic.load_job_context(self.document, self.current_path)
+        if index == 3:
+            self.assets.refresh()
     def keep_worker(self, worker):
         self.workers.append(worker)
 
@@ -1836,7 +1850,7 @@ class Workbench(QMainWindow):
         self.update_title()
 
     def update_title(self):
-        self.setWindowTitle(f"\u81ea\u52a8\u5316\u7528\u4f8b\u5de5\u4f5c\u53f0{' *' if self.dirty else ''}")
+        self.setWindowTitle(f"奇迹暖暖自动化工作台{' *' if self.dirty else ''}")
 
     def toast(self, message):
         self.message_status.setText(message)

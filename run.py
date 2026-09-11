@@ -1,5 +1,5 @@
 ﻿"""
-QQ 自动登录 - 运行脚本
+奇迹暖暖自动化 - 运行脚本
 
 使用方法:
     python run.py
@@ -7,14 +7,12 @@ QQ 自动登录 - 运行脚本
 前提条件:
     1. 已安装 MaaFw: pip install MaaFw
     2. 已连接 Android 设备并开启 USB 调试
-    3. assets/resource/image/ 下已放置模板截图
-    4. pipeline/login.json 中已填入正确的 QQ 号和密码
+    3. 设备已安装奇迹暖暖并完成 ADB 授权
 """
 
 import sys
 from pathlib import Path
 
-# 添加当前目录到路径
 sys.path.insert(0, str(Path(__file__).parent.resolve()))
 
 from maa.toolkit import Toolkit
@@ -25,10 +23,8 @@ from maa.define import LoggingLevel
 
 
 def main():
-    # 初始化 MaaFramework
     Toolkit.init_option(Path(__file__).parent / "assets")
 
-    # 加载资源
     resource = Resource()
     resource.set_logging_level(LoggingLevel.Warn)
 
@@ -39,7 +35,6 @@ def main():
         print("资源加载失败！请检查 assets 目录结构。")
         return
 
-    # 连接外部安卓设备（ADB 控制器）
     adb_devices = Toolkit.find_adb_devices()
     if not adb_devices:
         print("未找到 ADB 设备！请确认设备已连接并开启 USB 调试。")
@@ -59,24 +54,18 @@ def main():
     controller.post_connection().wait()
     print("成功连接 ADB 设备！")
 
-    # 创建 Tasker 并绑定资源
     tasker = Tasker()
     ret = tasker.bind(resource, controller)
     if not ret:
         print("绑定资源失败！")
         return
 
-    # 执行登录任务
-    print("开始执行 QQ 登录流程...")
-    task_id = tasker.post_task("QQLogin")
-
-    # 等待任务完成
+    print("开始启动奇迹暖暖...")
+    task_id = tasker.post_task("StartNikki")
     tasker.wait(task_id)
-
-    print("QQ 登录流程结束！")
-    print("请检查 QQ 是否已成功登录。")
+    print("启动流程结束！")
+    print("请检查游戏是否已进入主界面。")
 
 
 if __name__ == "__main__":
     main()
-

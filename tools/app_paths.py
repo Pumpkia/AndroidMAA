@@ -26,6 +26,7 @@ class AppPaths:
     jobs_dir: Path
     user_resource_dir: Path
     template_dir: Path
+    game_asset_dir: Path
     logs_dir: Path
     exports_dir: Path
     portable: bool
@@ -107,6 +108,7 @@ def resolve_app_paths(
         jobs_dir=data_dir / "jobs",
         user_resource_dir=user_resource_dir,
         template_dir=user_resource_dir / "image" / "jobs",
+        game_asset_dir=user_resource_dir / "image" / "assets",
         logs_dir=data_dir / "logs",
         exports_dir=exports_dir,
         portable=portable,
@@ -176,6 +178,7 @@ def _ensure_directories(paths: AppPaths) -> tuple[Path, ...]:
         paths.data_dir,
         paths.jobs_dir,
         paths.template_dir,
+        paths.game_asset_dir,
         paths.logs_dir,
         paths.exports_dir,
     ):

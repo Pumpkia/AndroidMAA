@@ -818,7 +818,7 @@ class JobEditor(tk.Tk):
         self.status_var.set(f"已新增：{step.name}")
 
     def add_input_step(self) -> None:
-        value = simpledialog.askstring("添加输入步骤", "请输入要写入 QQ App 的文本：", parent=self)
+        value = simpledialog.askstring("添加输入步骤", "请输入要写入游戏的文本：", parent=self)
         if value is None:
             return
         if not value:
@@ -1168,7 +1168,7 @@ class JobEditor(tk.Tk):
         except Exception as error:
             messagebox.showerror("导出失败", str(error), parent=self)
             return
-        entry = safe_name(self.document.name, "QQJob")
+        entry = safe_name(self.document.name, "NikkiJob")
         self.status_var.set(f"Pipeline 已导出，入口节点：{entry}")
         messagebox.showinfo("导出成功", f"入口节点：{entry}\n文件：{path_text}", parent=self)
 

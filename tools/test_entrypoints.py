@@ -15,6 +15,9 @@ class EntrypointContractTests(unittest.TestCase):
         spec = (PROJECT_DIR / "Qdd.spec").read_text(encoding="utf-8")
         self.assertIn(r"tools\\qt_workbench.py", spec)
         self.assertIn("'semantic_navigator'", spec)
+        self.assertIn("'asset_page'", spec)
+        self.assertIn("'clothing_memory'", spec)
+        self.assertIn("'stage_navigator'", spec)
         self.assertIn("name='Qdd'", spec)
         self.assertIn(r"assets\\icons\\qdd.ico", spec)
 
@@ -229,12 +232,12 @@ class EntrypointContractTests(unittest.TestCase):
         self.assertTrue((DEFAULT_SCHEMA_DIR / "pipeline.schema.json").is_file())
         self.assertTrue((DEFAULT_SCHEMA_DIR / "interface.schema.json").is_file())
 
-    def test_login_pipeline_targets_android_qq_package(self):
+    def test_login_pipeline_targets_nikki_package(self):
         pipeline = (PROJECT_DIR / "assets" / "resource" / "pipeline" / "login.json").read_text(
             encoding="utf-8"
         )
-        self.assertIn('"package": "com.tencent.mobileqq"', pipeline)
-        self.assertNotIn('"package": "com.tencent.qq"', pipeline)
+        self.assertIn('"package": "com.papegames.nn4"', pipeline)
+        self.assertNotIn('"package": "com.tencent.mobileqq"', pipeline)
 
 if __name__ == "__main__":
     unittest.main()
