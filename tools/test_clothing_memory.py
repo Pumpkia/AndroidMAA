@@ -6,7 +6,14 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from clothing_memory import ClothingItem, ClothingLedger
+from clothing_memory import (
+    DONE,
+    JOB_EVO_HUA,
+    JOB_EVO_RARE,
+    JOB_FARM,
+    NO_TRIES,
+    ClothingLedger,
+)
 
 
 class ClothingLedgerTests(unittest.TestCase):
@@ -19,70 +26,55 @@ class ClothingLedgerTests(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
-    def test_hierarchy_missing_and_material_priority(self):
-        target = self.ledger.add_item("星之海", category="连衣裙", needed=1, owned=0)
-        material = self.ledger.add_item(
-            "星之海·粉",
-            category="连衣裙",
-            needed=4,
-            owned=1,
-            stage="少女12-9",
-            daily_limit=3,
-            parent_id=target.id,
-        )
-        base = self.ledger.add_item(
-            "星之纱",
-            needed=8,
-            owned=2,
-            stage="少女5-3",
-            daily_limit=3,
-            parent_id=material.id,
-        )
-        self.assertEqual(target.missing, 1)
-        self.assertEqual(material.missing, 3)
-        self.assertEqual(self.ledger.layer_label(target.id), "目标")
-        self.assertEqual(self.ledger.layer_label(base.id), "2级材料")
-        queue = self.ledger.farm_queue()
-        self.assertEqual([item.name for item, _missing, _left in queue], ["星之纱", "星之海·粉"])
-        self.assertIn("少女5-3", self.ledger.recommend())
+    def test_default_plan_farms_until_evolve(self):
+        self.assertEqual(self.ledger.next_job(), JOB_FARM)
+        self.assertIn("8-支3", self.ledger.recommend())
+        self.ledger.set_have("NZ-001", 6)
+        self.assertEqual(self.ledger.next_job(), JOB_EVO_HUA)
+        self.ledger.apply_job_success(JOB_EVO_HUA)
+        self.assertEqual(self.ledger.piece("NZ-001").have, 1)
+        self.assertEqual(self.ledger.piece("NZ-002").have, 1)
+        self.ledger.set_have("NZ-002", 5)
+        self.assertEqual(self.ledger.next_job(), JOB_EVO_RARE)
+        self.ledger.apply_job_success(JOB_EVO_RARE)
+        self.assertEqual(self.ledger.piece("NZ-002").have, 1)
+        self.assertEqual(self.ledger.piece("NZ-003").have, 1)
+        self.assertEqual(self.ledger.next_job(), DONE)
 
-    def test_daily_clear_limit_resets_next_day(self):
-        item = self.ledger.add_item("冰之谛", stage="少女4-12", needed=3, owned=0, daily_limit=3)
-        self.assertEqual(self.ledger.record_clear(item.stage), 2)
-        self.assertEqual(self.ledger.record_clear(item.stage), 1)
-        self.assertEqual(self.ledger.record_clear(item.stage), 0)
-        with self.assertRaises(ValueError):
-            self.ledger.record_clear(item.stage)
-        self.day = "2026-09-11"
-        self.assertEqual(self.ledger.remaining(item.stage), 3)
-        self.assertEqual(self.ledger.record_clear(item.stage), 2)
-
-    def test_round_trip_and_remove_descendants(self):
-        root = self.ledger.add_item("夜的咏叹调", needed=1)
-        child = self.ledger.add_item("夜的咏叹调·珍稀", needed=3, parent_id=root.id, stage="少女10-2")
-        self.ledger.add_item("夜的咏叹调·华丽", needed=4, parent_id=child.id)
+    def test_farm_callback_writes_have_and_daily_remain(self):
+        self.ledger.apply_job_success(JOB_FARM)
+        self.assertEqual(self.ledger.piece("NZ-001").have, 1)
+        self.assertEqual(self.ledger.daily["remain"], 2)
         loaded = ClothingLedger(self.path, today=lambda: self.day)
-        self.assertEqual(len(loaded.items), 3)
-        self.assertEqual(loaded.get(child.id).stage, "少女10-2")
-        loaded.remove(child.id)
-        self.assertEqual([item.name for item in loaded.items], ["夜的咏叹调"])
-
-    def test_gain_and_reject_cycle(self):
-        parent = self.ledger.add_item("天鹅座", needed=1)
-        child = self.ledger.add_item("天鹅绒", needed=2, parent_id=parent.id)
-        updated = self.ledger.gain(child.id, 2)
-        self.assertEqual(updated.owned, 2)
-        self.assertEqual(updated.missing, 0)
+        self.assertEqual(loaded.piece("NZ-001").have, 1)
+        self.assertEqual(loaded.daily["remain"], 2)
+        self.ledger.apply_job_success(JOB_FARM)
+        self.ledger.apply_job_success(JOB_FARM)
         with self.assertRaises(ValueError):
-            self.ledger.upsert(
-                ClothingItem(id=parent.id, name="天鹅座", parent_id=child.id)
-            )
+            self.ledger.apply_job_success(JOB_FARM)
+        self.day = "2026-09-11"
+        self.assertEqual(self.ledger.next_job(), JOB_FARM)
+        self.assertEqual(self.ledger.daily["remain"], 3)
+
+    def test_inventory_set_have_is_source_of_truth(self):
+        self.ledger.set_have("NZ-001", 5)
+        self.ledger.set_have("NZ-002", 1)
+        self.ledger.set_have("NZ-003", 0)
+        self.assertEqual(self.ledger.piece("NZ-001").consumable, 4)
+        self.assertEqual(self.ledger.piece("NZ-002").consumable, 0)
+        self.assertEqual(self.ledger.next_job(), JOB_FARM)
+
+    def test_ocr_need_overrides_fallback(self):
+        self.ledger.set_have("NZ-002", 3)
+        self.assertNotEqual(self.ledger.next_job(), JOB_EVO_RARE)
+        self.ledger.set_evolve_need("NZ-003", 2)
+        self.assertEqual(self.ledger.next_job(), JOB_EVO_RARE)
 
     def test_malformed_file_is_reported(self):
-        self.path.write_text(json.dumps({"format_version": 1, "items": "bad"}), encoding="utf-8")
+        self.path.write_text(json.dumps({"format_version": 1, "items": []}), encoding="utf-8")
         loaded = ClothingLedger(self.path, today=lambda: self.day)
         self.assertTrue(loaded.load_error)
-        self.assertEqual(loaded.items, [])
+        self.assertEqual(loaded.chain, [])
 
 
 if __name__ == "__main__":

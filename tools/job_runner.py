@@ -15,6 +15,17 @@ from maa.resource import Resource
 from maa.tasker import Tasker, TaskerEventSink
 from maa.toolkit import Toolkit
 
+from clothing_memory import (
+    DONE,
+    JOB_EVO_HUA,
+    JOB_EVO_RARE,
+    JOB_FARM,
+    JOB_NAV,
+    JOB_WAREHOUSE,
+    NO_TRIES,
+    ClothingLedger,
+)
+from job_library import JobLibrary
 from job_model import JobDocument, safe_name
 
 
@@ -153,13 +164,25 @@ class MaaJobRunner:
                     errors.extend(self.module_validate(item) or [])
             if errors:
                 raise ValueError("\n".join(errors))
+        document = self._expand_warehouse(document, emit)
+        if document is None:
+            return True
+        if isinstance(document, JobDocument):
+            expanded_errors = document.validate()
+            if callable(self.module_validate):
+                expanded_errors.extend(self.module_validate(document) or [])
+            if expanded_errors:
+                raise ValueError("\n".join(expanded_errors))
         if not self._run_lock.acquire(blocking=False):
             raise RuntimeError("A Maa job is already running")
         with self._lock:
             self._run_active = True
             self._cancel_requested.clear()
         try:
-            return self._run_once(document, serial, emit)
+            succeeded = self._run_once(document, serial, emit)
+            if succeeded:
+                self._apply_memory_callback(document, emit)
+            return succeeded
         finally:
             with self._lock:
                 self._run_active = False
@@ -257,6 +280,35 @@ class MaaJobRunner:
         emit("正在停止作业…")
         tasker.post_stop().wait()
         return True
+
+    def _memory_path(self) -> Path:
+        return Path(self.jobs_dir) / "clothing_memory.json"
+
+    def _expand_warehouse(self, document: JobDocument, emit: LogCallback) -> JobDocument | None:
+        if not isinstance(document, JobDocument):
+            return document
+        if document.name != JOB_WAREHOUSE and document.memory_callback != JOB_WAREHOUSE:
+            return document
+        ledger = ClothingLedger(self._memory_path())
+        decision = ledger.next_job()
+        emit(f"仓库决策：{decision}")
+        if decision == DONE:
+            return None
+        if decision == NO_TRIES:
+            raise RuntimeError(NO_TRIES)
+        path = JobLibrary(self.jobs_dir).find_by_name(decision)
+        if path is None:
+            raise RuntimeError(f"找不到短任务: {decision}，请先录制并保存同名用例")
+        return JobDocument.load(path)
+
+    def _apply_memory_callback(self, document: JobDocument, emit: LogCallback) -> None:
+        if not isinstance(document, JobDocument):
+            return
+        hook = document.memory_callback or document.name
+        if hook not in {JOB_FARM, JOB_EVO_HUA, JOB_EVO_RARE, JOB_NAV}:
+            return
+        ClothingLedger(self._memory_path()).apply_job_success(hook)
+        emit(f"已写入 clothing_memory.json：{hook}")
 
     def _adb_path(self) -> Path:
         names = ("adb.exe", "adb") if os.name == "nt" else ("adb", "adb.exe")

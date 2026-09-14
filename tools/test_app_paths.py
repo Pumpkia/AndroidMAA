@@ -58,7 +58,7 @@ class PathResolutionTests(unittest.TestCase):
     def test_windows_frozen_portable_flag_keeps_app_data_and_uses_exports(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            app_dir = root / "Qdd"
+            app_dir = root / "NnMaa"
             write_file(app_dir / "portable.flag", "")
             paths = app_paths.resolve_app_paths(
                 app_dir=app_dir,
@@ -92,7 +92,7 @@ class PathResolutionTests(unittest.TestCase):
                 environ={"LOCALAPPDATA": str(local)},
             )
 
-            data_dir = normalized(local) / "Qdd"
+            data_dir = normalized(local) / "NnMaa"
             self.assertFalse(paths.portable)
             self.assertEqual(paths.assets_dir, normalized(app_dir) / "assets")
             self.assertEqual(paths.data_dir, data_dir)
@@ -123,7 +123,7 @@ class PathResolutionTests(unittest.TestCase):
 
             self.assertEqual(
                 paths.data_dir,
-                normalized(home) / "AppData" / "Local" / "Qdd",
+                normalized(home) / "AppData" / "Local" / "NnMaa",
             )
 
     def test_data_dir_override_has_priority_and_uses_installed_layout(self):
@@ -137,7 +137,7 @@ class PathResolutionTests(unittest.TestCase):
                 frozen=True,
                 os_name="nt",
                 environ={
-                    "QDD_DATA_DIR": str(override),
+                    "NNMAA_DATA_DIR": str(override),
                     "LOCALAPPDATA": str(root / "local"),
                 },
             )
@@ -156,7 +156,7 @@ class PathResolutionTests(unittest.TestCase):
 
     def test_other_frozen_platform_keeps_existing_app_layout(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            app_dir = Path(temp_dir) / "Qdd.app" / "Contents" / "Resources" / "Qdd"
+            app_dir = Path(temp_dir) / "NnMaa.app" / "Contents" / "Resources" / "NnMaa"
             paths = app_paths.resolve_app_paths(
                 app_dir=app_dir,
                 frozen=True,

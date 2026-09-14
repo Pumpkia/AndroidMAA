@@ -105,9 +105,13 @@ class StageRef:
         return f"卷 {volume_roman(self.volume)} {self.chapter}-{branch}{self.stage}"
 
     @property
-    def canonical(self) -> str:
+    def code(self) -> str:
         branch = "支" if self.branch else ""
-        return f"{self.difficulty}{self.chapter}{self.chapter_part}-{branch}{self.stage}"
+        return f"{self.chapter}{self.chapter_part}-{branch}{self.stage}"
+
+    @property
+    def canonical(self) -> str:
+        return f"{self.difficulty}{self.code}"
 
 
 def parse_stage(value: str, default_difficulty: str = "少女") -> StageRef:

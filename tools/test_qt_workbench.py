@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ["NNMAA_USE_SCRCPY"] = "0"
 
 import cv2
 import numpy as np
@@ -718,8 +719,8 @@ class UserDataLayoutTests(unittest.TestCase):
     def test_installed_layout_uses_user_jobs_templates_exports_and_overlay(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            install_dir = root / "Program Files" / "Qdd"
-            data_dir = root / "LocalAppData" / "Qdd"
+            install_dir = root / "Program Files" / "NnMaa"
+            data_dir = root / "LocalAppData" / "NnMaa"
             user_resource_dir = data_dir / "resource"
             paths = SimpleNamespace(
                 app_dir=install_dir,

@@ -40,6 +40,12 @@ class StageParseTests(unittest.TestCase):
         self.assertEqual(parse_stage("公主12-支2").stage_label, "卷 I 12-支2")
         self.assertEqual(parse_stage("卷 I 10-支2", "公主").canonical, "公主10-支2")
         self.assertEqual(parse_stage("15上-3").chapter_label, "第十五章上")
+        branch = parse_stage("8-支3", "公主")
+        self.assertEqual(branch.code, "8-支3")
+        self.assertTrue(branch.branch)
+        self.assertEqual(branch.chapter, 8)
+        self.assertEqual(branch.stage, 3)
+        self.assertEqual(branch.difficulty, "公主")
 
 
 class ExpandLabelTests(unittest.TestCase):

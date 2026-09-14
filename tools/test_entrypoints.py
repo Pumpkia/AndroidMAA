@@ -6,30 +6,41 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 
 class EntrypointContractTests(unittest.TestCase):
-    def test_source_launcher_uses_active_qt_workbench(self):
-        launcher = (PROJECT_DIR / "job-editor.bat").read_text(encoding="utf-8")
-        self.assertIn(r"python tools\qt_workbench.py", launcher)
-        self.assertNotIn(r"python tools\job_editor.py", launcher)
+    def test_exe_is_the_only_launcher(self):
+        """启动入口只有 NnMaa.exe，项目里不再保留 bat / python 启动垫片。"""
+
+        for name in ("job-editor.bat", "run.bat", "run.py"):
+            with self.subTest(name=name):
+                self.assertFalse((PROJECT_DIR / name).exists())
+
+        spec = (PROJECT_DIR / "NnMaa.spec").read_text(encoding="utf-8")
+        self.assertIn("'pipeline_cli'", spec)
+
+        workbench = (PROJECT_DIR / "tools" / "qt_workbench.py").read_text(encoding="utf-8")
+        self.assertIn("def parse_cli(", workbench)
+        self.assertIn("from pipeline_cli import run_pipeline", workbench)
+        self.assertNotIn(r"python tools\qt_workbench.py", workbench)
 
     def test_packaged_launcher_uses_active_qt_workbench(self):
-        spec = (PROJECT_DIR / "Qdd.spec").read_text(encoding="utf-8")
+        spec = (PROJECT_DIR / "NnMaa.spec").read_text(encoding="utf-8")
         self.assertIn(r"tools\\qt_workbench.py", spec)
         self.assertIn("'semantic_navigator'", spec)
         self.assertIn("'asset_page'", spec)
         self.assertIn("'clothing_memory'", spec)
         self.assertIn("'stage_navigator'", spec)
-        self.assertIn("name='Qdd'", spec)
-        self.assertIn(r"assets\\icons\\qdd.ico", spec)
+        self.assertIn("'scrcpy_input'", spec)
+        self.assertIn("name='NnMaa'", spec)
+        self.assertIn(r"assets\\icons\\nnmaa.ico", spec)
 
-    def test_qdd_icons_are_bundled(self):
+    def test_nnmaa_icons_are_bundled(self):
         icon_dir = PROJECT_DIR / "assets" / "icons"
-        self.assertTrue((icon_dir / "qdd-icon.png").is_file())
-        self.assertTrue((icon_dir / "qdd.ico").is_file())
-        self.assertTrue((icon_dir / "qdd.icns").is_file())
+        self.assertTrue((icon_dir / "nnmaa-icon.png").is_file())
+        self.assertTrue((icon_dir / "nnmaa.ico").is_file())
+        self.assertTrue((icon_dir / "nnmaa.icns").is_file())
 
     def test_windows_release_branding(self):
         legacy_name = "QQ" + "JobEditor"
-        windows_spec = (PROJECT_DIR / "Qdd.spec").read_text(encoding="utf-8")
+        windows_spec = (PROJECT_DIR / "NnMaa.spec").read_text(encoding="utf-8")
         workflow = (
             PROJECT_DIR / ".github" / "workflows" / "release.yml"
         ).read_text(encoding="utf-8")
@@ -38,16 +49,16 @@ class EntrypointContractTests(unittest.TestCase):
         self.assertFalse(
             (PROJECT_DIR / f"{legacy_name}.macos.spec").exists()
         )
-        self.assertIn("name='Qdd'", windows_spec)
-        self.assertIn("qdd.ico", windows_spec)
-        self.assertIn("name: Qdd-${{ env.VERSION }}-win-x64", workflow)
+        self.assertIn("name='NnMaa'", windows_spec)
+        self.assertIn("nnmaa.ico", windows_spec)
+        self.assertIn("name: NnMaa-${{ env.VERSION }}-win-x64", workflow)
         self.assertNotIn("macos-latest", workflow)
         self.assertNotIn("build_release_macos.py", workflow)
-        self.assertNotIn("Qdd-${{ env.VERSION }}-macos", workflow)
+        self.assertNotIn("NnMaa-${{ env.VERSION }}-macos", workflow)
         self.assertNotIn("release/*.dmg", workflow)
         self.assertNotIn("### macOS v2.1.0", readme)
-        self.assertNotIn("Qdd-v2.1.0-macos-arm64.zip", readme)
-        self.assertNotIn("Qdd-v2.1.0-macos-arm64.dmg", readme)
+        self.assertNotIn("NnMaa-v2.1.0-macos-arm64.zip", readme)
+        self.assertNotIn("NnMaa-v2.1.0-macos-arm64.dmg", readme)
         self.assertNotIn("macOS 13", readme)
 
         for label, contents in (
@@ -91,8 +102,8 @@ class EntrypointContractTests(unittest.TestCase):
         self.assertLess(installer_position, second_portable_position)
         self.assertLess(second_portable_position, restore_position)
         self.assertLess(restore_position, replace_position)
-        self.assertIn('$setupPath = Join-Path $releasePath "Qdd-$Version-setup.exe"', script)
-        self.assertIn('"/DOutputBaseFilename=Qdd-$Version-setup"', script)
+        self.assertIn('$setupPath = Join-Path $releasePath "NnMaa-$Version-setup.exe"', script)
+        self.assertIn('"/DOutputBaseFilename=NnMaa-$Version-setup"', script)
         self.assertIn(
             'New-Item -ItemType Directory -Path (Join-Path $stagedAppPath "jobs")',
             script,
@@ -107,7 +118,7 @@ class EntrypointContractTests(unittest.TestCase):
         script = (PROJECT_DIR / "tools" / "build_release.ps1").read_text(
             encoding="utf-8"
         )
-        installer = (PROJECT_DIR / "installer" / "Qdd.iss").read_text(
+        installer = (PROJECT_DIR / "installer" / "NnMaa.iss").read_text(
             encoding="utf-8"
         )
         workflow = (
@@ -119,13 +130,13 @@ class EntrypointContractTests(unittest.TestCase):
             "AppId={{D2B72385-6B43-4F52-A908-8E381C39141F}",
             installer,
         )
-        self.assertIn(r"DefaultDirName={autopf}\Qdd", installer)
+        self.assertIn(r"DefaultDirName={autopf}\NnMaa", installer)
         self.assertIn("AppVersion={#AppVersion}", installer)
         self.assertIn("VersionInfoVersion={#AppVersion}.0", installer)
         self.assertIn("SetupIconFile={#IconPath}", installer)
-        self.assertIn(r"UninstallDisplayIcon={app}\Qdd.exe", installer)
-        self.assertIn(r'Name: "{group}\Qdd"', installer)
-        self.assertIn(r'Name: "{autodesktop}\Qdd"', installer)
+        self.assertIn(r"UninstallDisplayIcon={app}\NnMaa.exe", installer)
+        self.assertIn(r'Name: "{group}\NnMaa"', installer)
+        self.assertIn(r'Name: "{autodesktop}\NnMaa"', installer)
         self.assertIn('Name: "desktopicon"', installer)
         self.assertIn("Flags: unchecked", installer)
         self.assertIn("PrivilegesRequiredOverridesAllowed=dialog commandline", installer)
@@ -184,7 +195,7 @@ class EntrypointContractTests(unittest.TestCase):
         self.assertIn("Windows package build failed", workflow)
         self.assertNotIn("continue-on-error", workflow)
         self.assertIn("release/*.zip", workflow)
-        self.assertIn("release/Qdd-*-setup.exe", workflow)
+        self.assertIn("release/NnMaa-*-setup.exe", workflow)
 
         for label, contents in (
             ("Windows builder", script),
@@ -215,7 +226,7 @@ class EntrypointContractTests(unittest.TestCase):
         paths = (
             PROJECT_DIR / "README.md",
             PROJECT_DIR / ".github" / "workflows" / "release.yml",
-            PROJECT_DIR / "installer" / "Qdd.iss",
+            PROJECT_DIR / "installer" / "NnMaa.iss",
             PROJECT_DIR / "tools" / "build_release.ps1",
             PROJECT_DIR / "tools" / "semantic_navigator.py",
             PROJECT_DIR / "tools" / "test_entrypoints.py",

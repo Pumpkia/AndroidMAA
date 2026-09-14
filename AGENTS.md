@@ -1,18 +1,20 @@
-# Qdd Agent Guide
+# NnMaa Agent Guide
 
 ## Scope
 
-- The active desktop entry point is `tools/qt_workbench.py`; `job-editor.bat` launches it.
+- The single entry point is the packaged `NnMaa.exe` (PyInstaller entry script `tools/qt_workbench.py`). No arguments opens the workbench; `--run [task]`, `--serial`, `--help` and `--version` drive the headless pipeline in `tools/pipeline_cli.py`. Do not reintroduce bat or python launcher shims.
 - Treat `tools/job_editor.py` and `tools/job_runner_app.py` as legacy Tk code unless a task explicitly targets them.
 - Keep `README.md` and `界面功能说明.md` aligned with behavior that exists in the active Qt entry point.
 - The asset workspace is `tools/asset_page.py` with catalog logic in `tools/asset_model.py`.
 - Stage recognition and chapter-list navigation live in `tools/stage_model.py` and `tools/stage_navigator.py`.
+- Workbench taps go through `tools/scrcpy_input.py` (scrcpy `--mouse=uhid`) when enabled; tests set `NNMAA_USE_SCRCPY=0`.
 
 ## Safety
 
 - Do not put passwords, tokens, or account secrets in job JSON; `InputText` is stored as plaintext.
 - Treat `tools/app_paths.py` as the authority for writable paths. Preserve `jobs_dir`, `template_dir`, `game_asset_dir`, `jobs_dir/semantic_map.json`, and `jobs_dir/clothing_memory.json` when changing packaging or migration code.
-- Installed Windows data lives under `%LOCALAPPDATA%\Qdd`; portable and source modes keep their documented app/project-relative layouts. Never make active code write beneath installed `assets/`.
+- Scripts must not read Excel. The only clothing ledger is `jobs/clothing_memory.json` (`clothing_memory.py`). `have` changes only via inventory edits or job success callbacks.
+- Installed Windows data lives under `%LOCALAPPDATA%\NnMaa`; portable and source modes keep their documented app/project-relative layouts. Never make active code write beneath installed `assets/`.
 - Release ZIPs and installers must start with blank jobs and no recorded templates. Restore local portable data only after all release artifacts are created.
 - Do not delete generated or user data unless the user explicitly approves the exact targets.
 

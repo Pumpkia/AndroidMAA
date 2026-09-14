@@ -14,10 +14,10 @@ import subprocess
 import sys
 
 
-APP_NAME = "Qdd"
-BUNDLE_IDENTIFIER = "com.pumpkia.androidmaa.qdd"
-ICON_FILE_NAME = "qdd.icns"
-MACOS_SPEC_NAME = "Qdd.macos.spec"
+APP_NAME = "NnMaa"
+BUNDLE_IDENTIFIER = "com.pumpkia.androidmaa.nnmaa"
+ICON_FILE_NAME = "nnmaa.icns"
+MACOS_SPEC_NAME = "NnMaa.macos.spec"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 

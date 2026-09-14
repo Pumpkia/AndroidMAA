@@ -17,11 +17,11 @@ VSVersionInfo(
                     '040904B0',
                     [
                         StringStruct('CompanyName', 'Pumpkia'),
-                        StringStruct('FileDescription', 'Qdd Android Automation Workbench'),
+                        StringStruct('FileDescription', 'NnMaa Android Automation Workbench'),
                         StringStruct('FileVersion', '2.1.0'),
-                        StringStruct('InternalName', 'Qdd'),
-                        StringStruct('OriginalFilename', 'Qdd.exe'),
-                        StringStruct('ProductName', 'Qdd'),
+                        StringStruct('InternalName', 'NnMaa'),
+                        StringStruct('OriginalFilename', 'NnMaa.exe'),
+                        StringStruct('ProductName', 'NnMaa'),
                         StringStruct('ProductVersion', '2.1.0'),
                     ],
                 )

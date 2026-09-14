@@ -587,7 +587,10 @@ class SemanticExecutor:
         node = self.require_node(region, snapshot, "\u70b9\u51fb\u524d\u8bc6\u522b")
         x, y = node.action_center
         self.emit(f"\u70b9\u51fb\uff1a{region.page} / {region.name} ({x}, {y})")
-        self.adb.shell(["input", "tap", str(x), str(y)])
+        if hasattr(self.adb, "inject_tap"):
+            self.adb.inject_tap(x, y)
+        else:
+            self.adb.shell(["input", "tap", str(x), str(y)])
 
     def verify(self, region: NamedRegion, snapshot: UiSnapshot) -> None:
         label = PURPOSE_LABELS[region.action]
@@ -1105,7 +1108,10 @@ class SemanticNavigatorPage(QWidget):
 
         def operation():
             try:
-                session.shell(["input", "tap", str(x), str(y)])
+                if hasattr(session, "inject_tap"):
+                    session.inject_tap(x, y)
+                else:
+                    session.shell(["input", "tap", str(x), str(y)])
                 return True, ""
             except Exception as error:
                 return False, str(error)

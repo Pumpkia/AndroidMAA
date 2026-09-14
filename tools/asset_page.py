@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from asset_model import ASSET_CATEGORIES, AssetLibrary, GameAsset
-from clothing_memory import ClothingItem, ClothingLedger
+from clothing_memory import JOB_FARM, ClothingItem, ClothingLedger
 from job_model import JobStep
 from semantic_navigator import scan_device
 from stage_model import parse_stage
@@ -236,12 +236,12 @@ class AssetPage(QWidget):
         self.memory_summary.setWordWrap(True)
         layout.addWidget(self.memory_summary)
         self.memory_tree = QTreeWidget()
-        self.memory_tree.setHeaderLabels(["衣服", "层级", "缺口", "关卡", "今日"])
+        self.memory_tree.setHeaderLabels(["衣服", "层级", "已有", "可用", "关卡", "今日"])
         self.memory_tree.setAlternatingRowColors(True)
         self.memory_tree.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
         header = self.memory_tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column in (1, 2, 3, 4):
+        for column in (1, 2, 3, 4, 5):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self.memory_tree.itemSelectionChanged.connect(self.load_memory_item)
         layout.addWidget(self.memory_tree, 1)
@@ -536,18 +536,21 @@ class AssetPage(QWidget):
     def _memory_node(self, item: ClothingItem) -> QTreeWidgetItem:
         remaining = self.ledger.remaining(item.stage) if item.stage else 0
         today = f"{self.ledger.used_today(item.stage)}/{item.daily_limit}" if item.stage else "--"
+        piece = self.ledger.piece(item.id)
+        usable = piece.consumable if piece is not None else max(0, item.owned - item.needed)
         node = QTreeWidgetItem(
             [
                 item.name if not item.category else f"{item.name}（{item.category}）",
                 self.ledger.layer_label(item.id),
-                str(item.missing),
+                str(item.owned),
+                str(usable),
                 item.stage or "--",
                 today if item.stage else "--",
             ]
         )
         node.setData(0, Qt.ItemDataRole.UserRole, item.id)
-        if item.missing > 0:
-            node.setForeground(2, Qt.GlobalColor.darkRed)
+        if usable <= 0 and item.stage:
+            node.setForeground(3, Qt.GlobalColor.darkRed)
         if item.stage and remaining <= 0:
             node.setForeground(4, Qt.GlobalColor.darkRed)
         for child in self.ledger.children_of(item.id):
@@ -654,7 +657,8 @@ class AssetPage(QWidget):
             QMessageBox.warning(self, "通关一次", "请先选择衣服。")
             return
         try:
-            remaining = self.ledger.record_clear(item.stage)
+            self.ledger.apply_job_success(JOB_FARM)
+            remaining = int(self.ledger.daily.get("remain") or 0)
         except Exception as error:
             QMessageBox.warning(self, "通关一次", str(error))
             return

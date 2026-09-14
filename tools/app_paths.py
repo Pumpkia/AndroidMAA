@@ -1,4 +1,4 @@
-"""Resolve Qdd runtime paths and migrate legacy user data safely."""
+"""Resolve NnMaa runtime paths and migrate legacy user data safely."""
 
 from __future__ import annotations
 
@@ -12,10 +12,23 @@ import sys
 import uuid
 
 
-APP_NAME = "Qdd"
-DATA_DIR_ENV = "QDD_DATA_DIR"
+APP_NAME = "NnMaa"
+DATA_DIR_ENV = "NNMAA_DATA_DIR"
 LAYOUT_VERSION = 1
 LAYOUT_MARKER_NAME = ".layout-v1.json"
+
+# ---- 产品根定位（NnMaa）----
+ROOT_ENV = "NNMAA_ROOT"
+APP_DIR_ENV = "NNMAA_APP_DIR"
+ROOT_MARKER = ".nnmaa-root"
+APP_MARKER = ".nnmaa-app"
+LEGACY_APP_DIR_NAME = "AndroidMAA"
+
+# ---- 旧名兼容（Qdd 时期的环境变量与数据目录）----
+LEGACY_APP_NAME = "Qdd"
+LEGACY_DATA_DIR_ENV = "QDD_DATA_DIR"
+LEGACY_ROOT_ENV = "QDD_ASSISTANT_ROOT"
+LEGACY_APP_DIR_ENV = "QDD_APP_DIR"
 
 
 @dataclass(frozen=True)
@@ -47,6 +60,99 @@ def _normalized_path(path: str | os.PathLike[str]) -> Path:
     return Path(os.path.abspath(expanded))
 
 
+def _env(environ: Mapping[str, str], name: str, legacy: str = "") -> str:
+    """读环境变量：NnMaa 新名优先，Qdd 旧名作为兼容兜底。"""
+
+    value = str(environ.get(name, "") or "").strip()
+    if value:
+        return value
+    return str(environ.get(legacy, "") or "").strip() if legacy else ""
+
+
+def migrate_legacy_data_root(local_root: Path) -> Path | None:
+    """把旧数据根 ``%LOCALAPPDATA%\\Qdd`` 一次性改名到 ``%LOCALAPPDATA%\\NnMaa``。
+
+    仅在「旧目录存在且新目录不存在」时执行，因此可重复调用。
+    改名是同卷元数据操作，用户用例库 / 模板无损。
+    失败（如目录被占用）返回 ``None``，由调用方决定是否继续沿用旧目录。
+    """
+
+    legacy = local_root / LEGACY_APP_NAME
+    target = local_root / APP_NAME
+    if legacy == target or target.exists() or not legacy.is_dir():
+        return None
+    try:
+        legacy.rename(target)
+    except OSError:
+        return None
+    return target
+
+
+def _search_base() -> Path:
+    """自定位的起点：冻结态从 exe 出发，源码态从本文件出发。"""
+
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve()
+    return Path(__file__).resolve()
+
+
+def assistant_root() -> Path:
+    """定位 NnMaa 产品根目录 —— 不依赖任何目录名，靠标记文件锚定。
+
+    解析顺序：
+      1. 环境变量 NNMAA_ROOT（旧名 QDD_ASSISTANT_ROOT 兼容；迁移 / 测试用）
+      2. 向上逐级找 .nnmaa-root  → 该目录即根
+      3. 向上逐级找 .nnmaa-app   → 该目录的父目录即根
+      4. 过渡兜底：向上找含 AndroidMAA/ 子目录的祖先（未放标记时）
+      5. 都找不到 → 明确报错，不猜测
+
+    源码模式：AndroidMAA/tools/app_paths.py  → 向上 2 级命中根标记
+    冻结模式：dist/NnMaa/NnMaa.exe               → 向上 4 级命中根标记
+    """
+
+    override = _env(os.environ, ROOT_ENV, LEGACY_ROOT_ENV)
+    if override:
+        return _normalized_path(override)
+
+    base = _search_base()
+    for parent in (base, *base.parents):
+        if (parent / ROOT_MARKER).is_file():
+            return parent
+        if (parent / APP_MARKER).is_file():
+            return parent.parent
+
+    for parent in base.parents:
+        if (parent / LEGACY_APP_DIR_NAME).is_dir():
+            return parent
+
+    raise RuntimeError(
+        f"找不到 NnMaa 产品根目录：请在根目录放置 {ROOT_MARKER} 标记文件，"
+        f"或设置环境变量 {ROOT_ENV}"
+    )
+
+
+def assistant_app_dir() -> Path:
+    """定位主程序目录（AndroidMAA 所在那一层）。放好 .nnmaa-app 后名字可任意改。"""
+
+    override = _env(os.environ, APP_DIR_ENV, LEGACY_APP_DIR_ENV)
+    if override:
+        return _normalized_path(override)
+
+    base = _search_base()
+    for parent in (base, *base.parents):
+        if (parent / APP_MARKER).is_file():
+            return parent
+
+    root = assistant_root()
+    try:
+        for candidate in sorted(root.iterdir()):
+            if candidate.is_dir() and (candidate / APP_MARKER).is_file():
+                return candidate
+    except OSError:
+        pass
+    return root / LEGACY_APP_DIR_NAME
+
+
 def _default_app_dir(frozen: bool) -> Path:
     if frozen:
         return Path(sys.executable).resolve().parent
@@ -68,7 +174,7 @@ def resolve_app_paths(
     application_dir = _normalized_path(app_dir or _default_app_dir(is_frozen))
     assets_dir = application_dir / "assets"
 
-    override = environment.get(DATA_DIR_ENV, "").strip()
+    override = _env(environment, DATA_DIR_ENV, LEGACY_DATA_DIR_ENV)
     if override:
         data_dir = _normalized_path(override)
         portable = False
@@ -87,7 +193,14 @@ def resolve_app_paths(
             else:
                 home = _normalized_path(home_dir or Path.home())
                 local_root = home / "AppData" / "Local"
+            # 首次以 NnMaa 身份启动：把 Qdd 时期的数据根整体改名过来（同卷秒级，无损）。
+            # 仅在真实环境下执行，保证测试可用自造 environ 隔离。
+            if environ is None:
+                migrate_legacy_data_root(local_root)
             data_dir = local_root / APP_NAME
+            if not data_dir.is_dir() and (local_root / LEGACY_APP_NAME).is_dir():
+                # 改名未成功（目录被占用等）：继续沿用旧目录，保证用户数据仍可见
+                data_dir = local_root / LEGACY_APP_NAME
             portable = False
             user_resource_dir = data_dir / "resource"
             exports_dir = data_dir / "exports"

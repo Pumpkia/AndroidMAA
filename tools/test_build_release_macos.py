@@ -31,19 +31,19 @@ def make_launcher(bundle_path: Path) -> Path:
 
 
 class MacOSReleaseTests(unittest.TestCase):
-    def test_qdd_brand_icon_and_plist(self):
-        self.assertEqual(release.APP_NAME, "Qdd")
-        self.assertEqual(release.MACOS_SPEC_NAME, "Qdd.macos.spec")
-        self.assertEqual(release.BUNDLE_IDENTIFIER, "com.pumpkia.androidmaa.qdd")
+    def test_nnmaa_brand_icon_and_plist(self):
+        self.assertEqual(release.APP_NAME, "NnMaa")
+        self.assertEqual(release.MACOS_SPEC_NAME, "NnMaa.macos.spec")
+        self.assertEqual(release.BUNDLE_IDENTIFIER, "com.pumpkia.androidmaa.nnmaa")
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             packaged_dir = root / "packaged"
             write_file(packaged_dir / release.APP_NAME, b"executable")
-            icon_path = root / "qdd.icns"
+            icon_path = root / "nnmaa.icns"
             icon_payload = b"icns" + (12).to_bytes(4, "big") + b"icon"
             write_file(icon_path, icon_payload)
-            bundle_path = root / "Qdd.app"
+            bundle_path = root / "NnMaa.app"
 
             release.write_app_bundle(
                 bundle_path,
@@ -54,15 +54,15 @@ class MacOSReleaseTests(unittest.TestCase):
 
             with (bundle_path / "Contents" / "Info.plist").open("rb") as file:
                 info = plistlib.load(file)
-            self.assertEqual(info["CFBundleDisplayName"], "Qdd")
-            self.assertEqual(info["CFBundleExecutable"], "Qdd")
+            self.assertEqual(info["CFBundleDisplayName"], "NnMaa")
+            self.assertEqual(info["CFBundleExecutable"], "NnMaa")
             self.assertEqual(info["CFBundleIdentifier"], release.BUNDLE_IDENTIFIER)
-            self.assertEqual(info["CFBundleIconFile"], "qdd.icns")
+            self.assertEqual(info["CFBundleIconFile"], "nnmaa.icns")
             self.assertEqual(
-                (bundle_path / "Contents" / "Resources" / "qdd.icns").read_bytes(),
+                (bundle_path / "Contents" / "Resources" / "nnmaa.icns").read_bytes(),
                 icon_payload,
             )
-            self.assertTrue((release.bundle_runtime_dir(bundle_path) / "Qdd").is_file())
+            self.assertTrue((release.bundle_runtime_dir(bundle_path) / "NnMaa").is_file())
 
     def test_clean_stage_excludes_jobs_recordings_and_debug_data(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -77,7 +77,7 @@ class MacOSReleaseTests(unittest.TestCase):
             )
             write_file(project_root / "assets" / "debug" / "private.log")
             write_file(project_root / "jobs" / "private.maa_job.json", "{}")
-            write_file(project_root / "README.md", "# Qdd\n")
+            write_file(project_root / "README.md", "# NnMaa\n")
             write_file(platform_tools / "adb", b"adb")
             write_file(
                 packaged_dir
@@ -126,8 +126,8 @@ class MacOSReleaseTests(unittest.TestCase):
     def test_preserve_local_data_keeps_jobs_and_only_safe_referenced_templates(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            old_bundle = root / "old" / "Qdd.app"
-            new_bundle = root / "new" / "Qdd.app"
+            old_bundle = root / "old" / "NnMaa.app"
+            new_bundle = root / "new" / "NnMaa.app"
             old_runtime = release.bundle_runtime_dir(old_bundle)
             new_runtime = release.bundle_runtime_dir(new_bundle)
             old_jobs = old_runtime / "jobs"
@@ -172,7 +172,7 @@ class MacOSReleaseTests(unittest.TestCase):
 
     def test_blank_runtime_guard_rejects_jobs_and_recorded_images(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            bundle = Path(temp_dir) / "Qdd.app"
+            bundle = Path(temp_dir) / "NnMaa.app"
             runtime = release.bundle_runtime_dir(bundle)
             (runtime / "jobs").mkdir(parents=True)
             release.verify_blank_runtime_data(bundle)
@@ -188,8 +188,8 @@ class MacOSReleaseTests(unittest.TestCase):
 
     def test_artifact_names_and_darwin_adb_are_host_independent(self):
         archive, dmg = release.artifact_paths(Path("release"), "v2.1.0", "macos-arm64")
-        self.assertEqual(archive.name, "Qdd-v2.1.0-macos-arm64.zip")
-        self.assertEqual(dmg.name, "Qdd-v2.1.0-macos-arm64.dmg")
+        self.assertEqual(archive.name, "NnMaa-v2.1.0-macos-arm64.zip")
+        self.assertEqual(dmg.name, "NnMaa-v2.1.0-macos-arm64.dmg")
         self.assertEqual(release.platform_tag("AMD64"), "macos-x86_64")
         self.assertEqual(release.platform_tag("aarch64"), "macos-arm64")
 
@@ -201,10 +201,10 @@ class MacOSReleaseTests(unittest.TestCase):
     def test_release_artifacts_precede_restore_resign_and_promotion(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            bundle = root / "stage" / "Qdd.app"
+            bundle = root / "stage" / "NnMaa.app"
             runtime = release.bundle_runtime_dir(bundle)
             (runtime / "jobs").mkdir(parents=True)
-            canonical = root / "dist" / "Qdd.app"
+            canonical = root / "dist" / "NnMaa.app"
             canonical.mkdir(parents=True)
             backup = root / "stage" / "previous-app"
             calls: list[str] = []
@@ -250,8 +250,8 @@ class MacOSReleaseTests(unittest.TestCase):
     def test_failed_promotion_rolls_back_previous_app(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            candidate = root / "stage" / "Qdd.app"
-            canonical = root / "dist" / "Qdd.app"
+            candidate = root / "stage" / "NnMaa.app"
+            canonical = root / "dist" / "NnMaa.app"
             backup = root / "stage" / "previous-app"
             make_launcher(candidate)
             write_file(canonical / "old-data.txt", b"old")

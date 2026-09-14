@@ -125,10 +125,10 @@ class ResourceBundleTests(unittest.TestCase):
         self.assertEqual(resource.directories, [Path("assets/resource")])
 
     def test_toolkit_uses_user_data_directory_not_installed_assets(self):
-        assets_dir = Path("Program Files/Qdd/assets")
-        data_dir = Path("LocalAppData/Qdd")
+        assets_dir = Path("Program Files/NnMaa/assets")
+        data_dir = Path("LocalAppData/NnMaa")
         runner = MaaJobRunner(
-            Path("Program Files/Qdd"),
+            Path("Program Files/NnMaa"),
             assets_dir,
             data_dir / "jobs",
             user_resource_dir=data_dir / "resource",

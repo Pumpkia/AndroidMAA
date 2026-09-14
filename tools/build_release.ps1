@@ -3,7 +3,8 @@ param(
     [ValidatePattern('^\.packaging(?:-[A-Za-z0-9._-]+)?$')]
     [string]$StagingName = ".packaging-build",
     [string]$IsccPath = "",
-    [switch]$SkipChecks
+    [switch]$SkipChecks,
+    [switch]$SkipInstaller
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,14 +13,14 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $stagingRoot = Join-Path $projectRoot $StagingName
 $workPath = Join-Path $stagingRoot "work"
 $stagingDistPath = Join-Path $stagingRoot "dist"
-$stagedAppPath = Join-Path $stagingDistPath "Qdd"
+$stagedAppPath = Join-Path $stagingDistPath "NnMaa"
 $canonicalDistPath = Join-Path $projectRoot "dist"
-$canonicalAppPath = Join-Path $canonicalDistPath "Qdd"
+$canonicalAppPath = Join-Path $canonicalDistPath "NnMaa"
 $backupAppPath = Join-Path $stagingRoot "previous-app"
 $releasePath = Join-Path $projectRoot "release"
-$archivePath = Join-Path $releasePath "Qdd-$Version-win-x64.zip"
-$setupPath = Join-Path $releasePath "Qdd-$Version-setup.exe"
-$installerScriptPath = Join-Path $projectRoot "installer\Qdd.iss"
+$archivePath = Join-Path $releasePath "NnMaa-$Version-win-x64.zip"
+$setupPath = Join-Path $releasePath "NnMaa-$Version-setup.exe"
+$installerScriptPath = Join-Path $projectRoot "installer\NnMaa.iss"
 $portableFlagPath = Join-Path $stagedAppPath "portable.flag"
 $setupVersion = $Version -replace '^v', ''
 if ($setupVersion -notmatch '^\d+\.\d+\.\d+$') {
@@ -126,9 +127,12 @@ function Copy-RuntimeData {
     }
 }
 
-$resolvedIsccPath = Resolve-IsccPath -ExplicitPath $IsccPath
-if (-not (Test-Path -LiteralPath $installerScriptPath -PathType Leaf)) {
-    throw "Inno Setup script is missing: $installerScriptPath"
+$resolvedIsccPath = ""
+if (-not $SkipInstaller) {
+    $resolvedIsccPath = Resolve-IsccPath -ExplicitPath $IsccPath
+    if (-not (Test-Path -LiteralPath $installerScriptPath -PathType Leaf)) {
+        throw "Inno Setup script is missing: $installerScriptPath"
+    }
 }
 
 if (Test-Path -LiteralPath $stagingRoot) {
@@ -162,7 +166,7 @@ try {
         }
     }
 
-    python -m PyInstaller --noconfirm --clean --workpath $workPath --distpath $stagingDistPath Qdd.spec
+    python -m PyInstaller --noconfirm --clean --workpath $workPath --distpath $stagingDistPath NnMaa.spec
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller failed."
     }
@@ -208,28 +212,30 @@ try {
 
     New-Item -ItemType File -Path $portableFlagPath -Force | Out-Null
     Compress-Archive -Path $stagedAppPath -DestinationPath $archivePath -CompressionLevel Optimal
-    Remove-Item -LiteralPath $portableFlagPath -Force
-    if (Test-Path -LiteralPath $portableFlagPath) {
-        throw "portable.flag must be absent while compiling the installer."
-    }
+    if (-not $SkipInstaller) {
+        Remove-Item -LiteralPath $portableFlagPath -Force
+        if (Test-Path -LiteralPath $portableFlagPath) {
+            throw "portable.flag must be absent while compiling the installer."
+        }
 
-    $isccArguments = @(
-        "/DAppVersion=$setupVersion"
-        "/DSourceDir=$stagedAppPath"
-        "/DOutputDir=$releasePath"
-        "/DOutputBaseFilename=Qdd-$Version-setup"
-        "/DIconPath=$(Join-Path $projectRoot 'assets\icons\qdd.ico')"
-        $installerScriptPath
-    )
-    & $resolvedIsccPath @isccArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Inno Setup compilation failed."
-    }
-    if (-not (Test-Path -LiteralPath $setupPath -PathType Leaf)) {
-        throw "Inno Setup did not create the expected installer: $setupPath"
-    }
+        $isccArguments = @(
+            "/DAppVersion=$setupVersion"
+            "/DSourceDir=$stagedAppPath"
+            "/DOutputDir=$releasePath"
+            "/DOutputBaseFilename=NnMaa-$Version-setup"
+            "/DIconPath=$(Join-Path $projectRoot 'assets\icons\nnmaa.ico')"
+            $installerScriptPath
+        )
+        & $resolvedIsccPath @isccArguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup compilation failed."
+        }
+        if (-not (Test-Path -LiteralPath $setupPath -PathType Leaf)) {
+            throw "Inno Setup did not create the expected installer: $setupPath"
+        }
 
-    New-Item -ItemType File -Path $portableFlagPath -Force | Out-Null
+        New-Item -ItemType File -Path $portableFlagPath -Force | Out-Null
+    }
 
     if (Test-Path -LiteralPath $canonicalAppPath) {
         Copy-RuntimeData -ExistingAppPath $canonicalAppPath -NewAppPath $stagedAppPath
@@ -238,7 +244,7 @@ try {
     New-Item -ItemType Directory -Path $canonicalDistPath -Force | Out-Null
     try {
         Move-Item -LiteralPath $stagedAppPath -Destination $canonicalAppPath
-        if (-not (Test-Path -LiteralPath (Join-Path $canonicalAppPath "Qdd.exe"))) {
+        if (-not (Test-Path -LiteralPath (Join-Path $canonicalAppPath "NnMaa.exe"))) {
             throw "Canonical application promotion failed."
         }
         if (Test-Path -LiteralPath $backupAppPath) {
@@ -256,7 +262,9 @@ try {
     }
 
     Write-Output "Release archive: $archivePath"
-    Write-Output "Installer: $setupPath"
+    if (-not $SkipInstaller) {
+        Write-Output "Installer: $setupPath"
+    }
     Write-Output "Application: $canonicalAppPath"
 }
 finally {

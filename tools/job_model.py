@@ -287,6 +287,7 @@ class JobDocument:
     steps: list[JobStep] = field(default_factory=list)
     module_id: str = ""
     module_version: int = 1
+    memory_callback: str = ""
 
     @classmethod
     def load(cls, path: Path) -> "JobDocument":
@@ -310,6 +311,7 @@ class JobDocument:
             steps=[JobStep.from_dict(item) for item in steps],
             module_id=data.get("module_id", ""),
             module_version=data.get("module_version", 1),
+            memory_callback=data.get("memory_callback", ""),
         )
 
     def save(self, path: Path) -> None:
@@ -319,6 +321,7 @@ class JobDocument:
             "name": self.name,
             "module_id": self.module_id,
             "module_version": self.module_version,
+            "memory_callback": self.memory_callback,
             "category": self.category,
             "prerequisites": self.prerequisites,
             "device_size": self.device_size,

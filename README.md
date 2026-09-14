@@ -1,15 +1,15 @@
-# Qdd
+# NnMaa
 
-Qdd 是基于 [MaaFramework](https://github.com/MaaXYZ/MaaFramework) 的 Android ADB 自动化用例工作台，面向《奇迹暖暖》等手游场景。它在一个窗口中完成设备截图、用例录制、用例管理、队列回放、命名区域语义导航和衣橱资产管理。
+NnMaa 是基于 [MaaFramework](https://github.com/MaaXYZ/MaaFramework) 的 Android ADB 自动化用例工作台，面向《奇迹暖暖》等手游场景。它在一个窗口中完成设备截图、用例录制、用例管理、队列回放、命名区域语义导航和衣橱资产管理。
 
 ## 环境要求
 
-- Windows 10/11?64 ??
+- Windows 10/11（64 位）
 - Python 3.10 或更高版本
 - 已安装《奇迹暖暖》的 Android 真机或模拟器
 - 设备已开启开发者选项和 USB 调试，并完成 ADB 授权
 
-Windows ????? Windows `platform-tools`???????????? `PATH` ?? `adb`?
+Windows 环境已内置 `platform-tools`；如需在任意目录直接使用 `adb`，可把它加入 `PATH`。
 
 ## 界面布局
 
@@ -31,7 +31,18 @@ python -m pip install -r tools/requirements.txt
 python tools/qt_workbench.py
 ```
 
-也可以双击 `job-editor.bat` 启动。
+打包版直接双击 `NnMaa.exe`。命令行参数：
+
+```powershell
+NnMaa.exe                                    # 启动图形工作台
+NnMaa.exe --run                              # 无界面执行默认 Pipeline 任务（StartNikki）
+NnMaa.exe --run <任务名>                      # 指定 Pipeline 入口节点
+NnMaa.exe --run <任务名> --serial <序列号>     # 指定 ADB 设备
+NnMaa.exe --help
+NnMaa.exe --version
+```
+
+录制时 scrcpy 投屏嵌在工作台左侧，和画布是同一个窗口。选设备后点「投屏录制」或「接入投屏」。需 scrcpy 2.4+。
 
 ## 连接设备
 
@@ -101,8 +112,9 @@ python tools/qt_workbench.py
 3. 获取设备截图后，可点击“从截图保存”把当前画面收入衣橱分类。
 4. 选中资产后点击“加入当前用例”，会生成模板匹配步骤并切换到“用例录制”；该用例绑定内置“资产”模块。
 5. 打开“刷关记忆”页，新建目标衣服，再为它添加下级材料；记录需要件数、已有件数、刷哪关和每日通过次数。
-6. 通关后点“通关一次”消耗今日次数；拿到掉落点“获得一件”。次数按关卡共用，跨天自动清零。优先刷关提示会把深层材料排在前面。
-7. “关卡”页可识别当前章节界面，并按「切换章节 → 滑动列表 → 点章节右侧任意 n/m 进度展开 → 点具体关卡」进入目标关。左边完成数不固定。
+6. 衣服账本只在 `jobs/clothing_memory.json`。人改 `have` / 每日次数；回放成功后短任务回调写入。Excel 不进脚本。
+7. 仓库元任务 `warehouse_nz_rare` 只按记忆缺口挑选 `nav_8z3` / `farm_8z3_once` / `evo_base_to_hua` / `evo_hua_to_rare`。关卡号用 `8-支3` 这种支线格式。
+8. “关卡”页可识别当前章节界面，并按「切换章节 → 滑动列表 → 点章节右侧任意 n/m 进度展开 → 点具体关卡」进入目标关。左边完成数不固定。
 
 ## v2.1.0 当前能力
 
@@ -112,24 +124,24 @@ python tools/qt_workbench.py
 - 支持真机控件扫描、双坐标预览、区域命名，以及跨页面点击、检查和识别。
 - 支持删除单个用例；分类管理和拖动迁移暂未在当前 Qt 工作台中提供。
 - Windows 构建同时生成便携 ZIP 和 Inno Setup 安装程序；安装版可放在 `Program Files`，可写数据独立保存到当前用户目录。
-- ????????????????? Windows `dist/Qdd/` ??????????
+- ????????????????? Windows `dist/NnMaa/` ??????????
 - ZIP、Setup 和 DMG 使用空用例仓库生成，不包含旧用例、语义地图或录制截图；重建完成后的本地运行目录会保留原有用例及其引用模板。
 
 
 ## 数据目录与迁移
 
-Qdd 将程序资源与可写数据分开。Windows 安装版可以安全安装到 `Program Files`，保存用例时不需要管理员权限。
+NnMaa 将程序资源与可写数据分开。Windows 安装版可以安全安装到 `Program Files`，保存用例时不需要管理员权限。
 
 | 运行方式 | 可写数据根目录 | 说明 |
 | --- | --- | --- |
-| Windows 安装版 | `%LOCALAPPDATA%\Qdd` | Setup 不包含 `portable.flag`；升级和卸载不会删除此目录。 |
-| Windows 便携 ZIP / `dist/Qdd` | Qdd 程序目录 | ZIP 和本地 `dist` 带 `portable.flag`，适合整体移动。 |
+| Windows 安装版 | `%LOCALAPPDATA%\NnMaa` | Setup 不包含 `portable.flag`；升级和卸载不会删除此目录。 |
+| Windows 便携 ZIP / `dist/NnMaa` | NnMaa 程序目录 | ZIP 和本地 `dist` 带 `portable.flag`，适合整体移动。 |
 | Windows 源码运行 | 项目根目录 | 保持现有开发目录结构。 |
 
 Windows 安装版的数据子目录如下：
 
 ```text
-%LOCALAPPDATA%\Qdd\
+%LOCALAPPDATA%\NnMaa\
 |-- jobs\                              # 用例、分类、semantic_map.json 和 clothing_memory.json
 |-- resource\image\jobs\               # 录制模板图片
 |-- resource\image\assets\             # 奇迹暖暖衣橱与界面资产
@@ -142,7 +154,7 @@ Windows 安装版的数据子目录如下：
 
 安装版首次启动时会检查安装目录中的旧版 `jobs/` 和 `assets/resource/image/jobs/`。迁移采用“不覆盖已有文件”的方式，全部完成后才写入 `.layout-v1.json` 标记；中途失败可在下次启动重试。内置 Maa 资源保持只读，用户模板通过可写 `resource/` 目录作为覆盖层加载。
 
-`QDD_DATA_DIR` 可显式指定独立数据根目录，主要用于隔离测试或受管环境；它优先于默认路径和 `portable.flag`。指定后使用安装版子目录结构。不要把该变量指向不受信任的链接目录。
+`NNMAA_DATA_DIR` 可显式指定独立数据根目录，主要用于隔离测试或受管环境；它优先于默认路径和 `portable.flag`。指定后使用安装版子目录结构。不要把该变量指向不受信任的链接目录。
 
 ## MAA 兼容性
 
@@ -156,7 +168,7 @@ python tools/validate_schema.py
 
 ## 打包发布包
 
-????? Windows ????????????????? GitHub Actions ???? Windows ???? ZIP?
+下面只讲 Windows 本地打包；macOS 构建由 GitHub Actions 负责生成 ZIP。
 
 ### Windows v2.1.0
 
@@ -167,13 +179,13 @@ python -m pip install -r tools/requirements.txt
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\build_release.ps1 -Version v2.1.0
 ```
 
-Windows 构建还需要 Inno Setup 6。打包脚本会先校验 ProjectInterface 和 Pipeline Schema，再运行单元测试，使用 PyInstaller 构建一次洁净应用，然后分别生成便携 ZIP 和安装程序。归档和安装程序都生成完毕后，脚本才恢复本地 `dist/Qdd/` 的旧用例和引用模板：
+Windows 构建还需要 Inno Setup 6。打包脚本会先校验 ProjectInterface 和 Pipeline Schema，再运行单元测试，使用 PyInstaller 构建一次洁净应用，然后分别生成便携 ZIP 和安装程序。归档和安装程序都生成完毕后，脚本才恢复本地 `dist/NnMaa/` 的旧用例和引用模板：
 
 ```text
-release/Qdd-v2.1.0-win-x64.zip
-release/Qdd-v2.1.0-setup.exe
+release/NnMaa-v2.1.0-win-x64.zip
+release/NnMaa-v2.1.0-setup.exe
 ```
 
-普通用户优先运行 `Qdd-v2.1.0-setup.exe`；安装器创建开始菜单快捷方式，并可选择创建桌面快捷方式。程序升级或卸载后，`%LOCALAPPDATA%\Qdd` 中的用例和模板继续保留。
+普通用户优先运行 `NnMaa-v2.1.0-setup.exe`；安装器创建开始菜单快捷方式，并可选择创建桌面快捷方式。程序升级或卸载后，`%LOCALAPPDATA%\NnMaa` 中的用例和模板继续保留。
 
-需要免安装时，解压完整 ZIP 后运行 `Qdd/Qdd.exe`。不要只复制 EXE；`_internal/`、`assets/`、`jobs/`、`platform-tools/` 和 `portable.flag` 共同构成便携版。当前安装程序未做代码签名，Windows SmartScreen 可能在首次运行时提示确认。
+需要免安装时，解压完整 ZIP 后运行 `NnMaa/NnMaa.exe`。不要只复制 EXE；`_internal/`、`assets/`、`jobs/`、`platform-tools/` 和 `portable.flag` 共同构成便携版。当前安装程序未做代码签名，Windows SmartScreen 可能在首次运行时提示确认。

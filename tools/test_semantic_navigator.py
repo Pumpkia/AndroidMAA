@@ -1,7 +1,10 @@
 from pathlib import Path
+import os
 import sys
 import tempfile
 import unittest
+
+os.environ["NNMAA_USE_SCRCPY"] = "0"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 

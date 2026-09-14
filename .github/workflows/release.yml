@@ -100,16 +100,16 @@ jobs:
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Qdd-${{ env.VERSION }}-win-x64
+          name: NnMaa-${{ env.VERSION }}-win-x64
           path: |
             release/*.zip
-            release/Qdd-*-setup.exe
+            release/NnMaa-*-setup.exe
 
       - name: Upload Windows diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Qdd-${{ env.VERSION }}-windows-diagnostics
+          name: NnMaa-${{ env.VERSION }}-windows-diagnostics
           if-no-files-found: ignore
           path: |
             release/*
@@ -129,7 +129,7 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: Qdd-${{ env.VERSION }}-win-x64
+          pattern: NnMaa-${{ env.VERSION }}-win-x64
           path: release-assets
           merge-multiple: true
 

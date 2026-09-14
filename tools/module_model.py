@@ -1,4 +1,4 @@
-"""Definitions and validation for Qdd custom workbench modules."""
+"""Definitions and validation for NnMaa custom workbench modules."""
 
 from __future__ import annotations
 

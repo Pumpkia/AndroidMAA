@@ -303,6 +303,16 @@ class JobLibrary:
             raise ValueError(f"不是 Maa 作业文件: {job_path}")
         return resolved
 
+    def find_by_name(self, name: str) -> Path | None:
+        for path in self._iter_job_paths():
+            try:
+                document = JobDocument.load(path)
+            except Exception:
+                continue
+            if document.name == name:
+                return path
+        return None
+
     def _iter_job_paths(self) -> list[Path]:
         return sorted(
             (

@@ -1,9 +1,11 @@
-"""Native Qt desktop workbench for Qdd."""
+"""Native Qt desktop workbench for NnMaa."""
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import threading
@@ -23,6 +25,15 @@ from PySide6.QtWidgets import (
     QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from app_paths import APP_PATHS, initialize_data_layout
+from scrcpy_input import available as scrcpy_available
+from scrcpy_input import embed as scrcpy_embed
+from scrcpy_input import ensure_running as scrcpy_ensure_running
+from scrcpy_input import is_running as scrcpy_is_running
+from scrcpy_input import scrcpy_home
+from scrcpy_input import resize_embedded as scrcpy_resize
+from scrcpy_input import stop as scrcpy_stop
+from scrcpy_input import swipe as scrcpy_swipe
+from scrcpy_input import tap as scrcpy_tap
 from job_library import JobLibrary
 from job_model import JobDocument, JobStep, safe_name
 from job_runner import MaaJobRunner
@@ -39,6 +50,61 @@ JOBS_DIR = APP_PATHS.jobs_dir
 MODULES_PATH = JOBS_DIR / "modules.json"
 
 
+DEFAULT_PIPELINE_ENTRY = "StartNikki"
+
+CLI_USAGE = """NnMaa —— 奇迹暖暖自动化工作台
+
+用法：
+  NnMaa.exe                                   启动图形工作台（默认）
+  NnMaa.exe --run [任务名]                    无界面执行 Pipeline 任务（默认 {entry}）
+  NnMaa.exe --run <任务名> --serial <序列号>   指定 ADB 设备执行
+  NnMaa.exe --help                            显示本帮助
+  NnMaa.exe --version                         显示版本
+
+说明：
+  --serial 省略时使用第一台已连接的 ADB 设备。
+""".format(entry=DEFAULT_PIPELINE_ENTRY)
+
+
+def app_version() -> str:
+    """版本号取自 assets/interface.json，源码模式与打包版共用同一来源。"""
+
+    try:
+        payload = json.loads((ASSETS_DIR / "interface.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "unknown"
+    version = payload.get("version")
+    return str(version) if version else "unknown"
+
+
+def parse_cli(argv):
+    """剥离 NnMaa 自己的子命令参数，其余原样留给 Qt。"""
+
+    options = {"run": None, "serial": None, "help": False, "version": False}
+    remaining = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--run":
+            index += 1
+            options["run"] = argv[index] if index < len(argv) else DEFAULT_PIPELINE_ENTRY
+        elif token.startswith("--run="):
+            options["run"] = token.split("=", 1)[1] or DEFAULT_PIPELINE_ENTRY
+        elif token == "--serial":
+            index += 1
+            options["serial"] = argv[index] if index < len(argv) else None
+        elif token.startswith("--serial="):
+            options["serial"] = token.split("=", 1)[1] or None
+        elif token in ("-h", "--help"):
+            options["help"] = True
+        elif token == "--version":
+            options["version"] = True
+        else:
+            remaining.append(token)
+        index += 1
+    return options, remaining
+
+
 def adb_executable():
     names = ("adb.exe", "adb") if os.name == "nt" else ("adb", "adb.exe")
     for name in names:
@@ -48,7 +114,7 @@ def adb_executable():
     return Path("adb")
 
 
-APP_ICON = ASSETS_DIR / "icons" / "qdd-icon.png"
+APP_ICON = ASSETS_DIR / "icons" / "nnmaa-icon.png"
 
 RECOGNITION_OPTIONS = (("\u6a21\u677f\u5339\u914d", "TemplateMatch"), ("\u6587\u5b57\u8bc6\u522b (OCR)", "OCR"), ("\u76f4\u63a5\u547d\u4e2d", "DirectHit"))
 ACTION_OPTIONS = (("\u70b9\u51fb", "Click"), ("\u8f93\u5165\u6587\u672c", "InputText"), ("\u6ed1\u52a8", "Swipe"), ("\u6309\u952e", "ClickKey"), ("\u7b49\u5f85", "DoNothing"))
@@ -352,6 +418,34 @@ class AdbClient:
             raise RuntimeError(result.stderr.decode("utf-8", "replace") or "ADB 操作失败")
         return result.stdout
 
+    def physical_size(self):
+        if self.recording_geometry is not None:
+            return self.recording_geometry.physical_size
+        result = self.run([*self.args(), "shell", "wm", "size"])
+        text = result.stdout.decode("utf-8", "replace")
+        match = re.search(r"Physical size:\s*(\d+)x(\d+)", text)
+        if not match:
+            raise RuntimeError("无法读取设备分辨率")
+        return int(match.group(1)), int(match.group(2))
+
+    def inject_tap(self, x, y):
+        x, y = int(round(x)), int(round(y))
+        if scrcpy_available():
+            width, height = self.physical_size()
+            if not scrcpy_tap(self.serial, x, y, width, height):
+                raise RuntimeError("scrcpy 点击失败，请确认投屏窗口可见")
+            return
+        self.shell(["input", "tap", str(x), str(y)])
+
+    def inject_swipe(self, x1, y1, x2, y2, duration=300):
+        point = [int(round(value)) for value in (x1, y1, x2, y2)]
+        if scrcpy_available():
+            width, height = self.physical_size()
+            if not scrcpy_swipe(self.serial, *point, width, height, duration):
+                raise RuntimeError("scrcpy 滑动失败，请确认投屏窗口可见")
+            return
+        self.shell(["input", "swipe", *map(str, [*point, duration])])
+
     def execute(self, step):
         if not self.serial:
             raise RuntimeError("请先选择已连接的 ADB 设备")
@@ -366,13 +460,11 @@ class AdbClient:
                     click_target_point(step.target)
                 )
             x, y = point
-            self.shell(["input", "tap", str(x), str(y)])
+            self.inject_tap(x, y)
         elif step.action == "Swipe" and step.target and step.swipe_end:
             begin = self.recording_point_to_physical(step.target)
             end = self.recording_point_to_physical(step.swipe_end)
-            self.shell([
-                "input", "swipe", *map(str, [*begin, *end, step.duration])
-            ])
+            self.inject_swipe(*begin, *end, step.duration)
         elif step.action == "InputText":
             self.shell(["input", "text", step.input_text.replace(" ", "%s")])
         elif step.action == "ClickKey":
@@ -547,13 +639,35 @@ class Canvas(QWidget):
             painter.drawLine(self.start, self.current)
 
 
-class DevicePane(QFrame):
-    def __init__(self, app):
+class ScrcpyHost(QWidget):
+    def __init__(self):
         super().__init__()
+        self.serial = ""
+        self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow)
+        self.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors)
+        self.setMinimumWidth(280)
+        self.setMinimumHeight(400)
+
+    def attach(self, serial: str):
+        self.serial = serial
+        handle = int(self.winId())
+        scrcpy_embed(serial, handle, max(self.width(), 280), max(self.height(), 400))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.serial:
+            scrcpy_resize(self.serial, self.width(), self.height())
+
+
+class DevicePane(QFrame):
+    def __init__(self, app, live_mirror=False):
+        super().__init__()
+        self.app = app
+        self.live_mirror = live_mirror
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         header = QHBoxLayout()
-        title = QLabel("设备预览")
+        title = QLabel("设备预览" if not live_mirror else "投屏")
         title.setObjectName("sectionTitle")
         header.addWidget(title)
         header.addStretch()
@@ -563,8 +677,46 @@ class DevicePane(QFrame):
         shot.clicked.connect(app.capture_screen)
         header.addWidget(shot)
         layout.addLayout(header)
+        self.mirror_status = QLabel("")
+        self.mirror_status.setObjectName("muted")
+        self.mirror_status.setWordWrap(True)
+        layout.addWidget(self.mirror_status)
+        if live_mirror:
+            open_mirror = QPushButton("接入投屏")
+            open_mirror.setObjectName("primaryButton")
+            open_mirror.clicked.connect(app.open_scrcpy_recording)
+            layout.addWidget(open_mirror)
         self.phone = PhonePreview()
-        layout.addWidget(self.phone, 1)
+        if live_mirror:
+            self.phone.hide()
+        else:
+            layout.addWidget(self.phone, 1)
+        self.update_mirror_status()
+
+    def attach_mirror(self, serial: str):
+        if self.app.scrcpy_host is None or not serial:
+            return
+        self.app.scrcpy_host.attach(serial)
+        self.phone.hide()
+        self.update_mirror_status()
+
+    def update_mirror_status(self):
+        if not self.live_mirror:
+            self.mirror_status.setText("")
+            return
+        serial = self.app.adb.serial
+        if not serial:
+            self.mirror_status.setText("选择设备后，投屏会嵌在左侧")
+            return
+        if scrcpy_is_running(serial):
+            self.mirror_status.setText("投屏已嵌入本窗口。左侧实时操作，截图后在中间画布标注。")
+            return
+        if scrcpy_available():
+            self.mirror_status.setText("点「接入投屏」把手机画面嵌进本窗口")
+            return
+        self.mirror_status.setText(
+            f"首次接入会下载 scrcpy 到 {scrcpy_home()}，并检查更新"
+        )
 
 
 def tool(owner, icon_name, tip, callback):
@@ -693,7 +845,7 @@ class RecordPage(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        self.device = DevicePane(app)
+        self.device = DevicePane(app, live_mirror=True)
         self.device.setObjectName("devicePane")
         root.addWidget(self.device, 32)
         root.addWidget(self.build_canvas(), 37)
@@ -1446,6 +1598,13 @@ class Workbench(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         root.addWidget(self.build_topbar())
+        self.scrcpy_host = ScrcpyHost()
+        self.scrcpy_host.setMinimumWidth(360)
+        body = QWidget()
+        body_layout = QHBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+        body_layout.addWidget(self.scrcpy_host, 0)
         self.pages = QStackedWidget()
         self.record = RecordPage(self)
         self.playback = PlaybackPage(self)
@@ -1455,7 +1614,8 @@ class Workbench(QMainWindow):
         self.pages.addWidget(self.playback)
         self.pages.addWidget(self.semantic)
         self.pages.addWidget(self.assets)
-        root.addWidget(self.pages, 1)
+        body_layout.addWidget(self.pages, 1)
+        root.addWidget(body, 1)
         root.addWidget(self.build_statusbar())
         self.setCentralWidget(central)
         self.apply_style()
@@ -1474,7 +1634,7 @@ class Workbench(QMainWindow):
         mark = QLabel("Q")
         mark.setObjectName("brandMark")
         layout.addWidget(mark)
-        brand = QLabel("Qdd")
+        brand = QLabel("NnMaa")
         brand.setObjectName("brand")
         layout.addWidget(brand)
         layout.addSpacing(20)
@@ -1518,6 +1678,9 @@ class Workbench(QMainWindow):
         self.screenshot_button.setObjectName("primaryButton")
         self.screenshot_button.clicked.connect(self.capture_screen)
         layout.addWidget(self.screenshot_button)
+        self.mirror_button = QPushButton("投屏录制")
+        self.mirror_button.clicked.connect(self.open_scrcpy_recording)
+        layout.addWidget(self.mirror_button)
         self.record_button.setChecked(True)
         return bar
 
@@ -1638,6 +1801,7 @@ class Workbench(QMainWindow):
         self.devices.setEnabled(not active)
         self.refresh_devices_button.setEnabled(not active)
         self.screenshot_button.setEnabled(not active)
+        self.mirror_button.setEnabled(not active)
         self.record.setEnabled(not active)
         self.assets.setEnabled(not active)
         for shortcut in self.idle_shortcuts:
@@ -1656,6 +1820,8 @@ class Workbench(QMainWindow):
             self.playback.refresh_library()
         if index == 2:
             self.semantic.load_job_context(self.document, self.current_path)
+        if index == 0:
+            self.record.device.update_mirror_status()
         if index == 3:
             self.assets.refresh()
     def keep_worker(self, worker):
@@ -1722,6 +1888,42 @@ class Workbench(QMainWindow):
         connected = bool(serial)
         self.adb_status.setText(f"●  ADB：{'已连接' if connected else '未连接'}")
         self.adb_status.setStyleSheet(f"color: {'#22B455' if connected else '#A0A5AD'}")
+        self.record.device.update_mirror_status()
+
+    def open_scrcpy_recording(self):
+        if not self.adb.serial:
+            QMessageBox.warning(self, "投屏录制", "请先选择 ADB 设备。")
+            return
+        if not scrcpy_available():
+            QMessageBox.warning(
+                self,
+                "投屏录制",
+                "未找到 scrcpy。请安装 2.4+ 并加入 PATH，或放到项目 scrcpy/scrcpy.exe。",
+            )
+            return
+        serial = self.adb.serial
+        self.switch_page(0)
+        if scrcpy_is_running(serial):
+            self.record.device.attach_mirror(serial)
+            self.toast("投屏已嵌入左侧")
+            self._show_mirror_viewport(serial)
+            return
+        self.message_status.setText("正在接入投屏...")
+
+        def done(_result):
+            self.record.device.attach_mirror(serial)
+            self.toast("投屏已嵌入本窗口，可在左侧直接操作手机")
+            self._show_mirror_viewport(serial)
+
+        self.run_async(lambda: scrcpy_ensure_running(serial), done)
+
+    def _show_mirror_viewport(self, serial):
+        """投屏连上后，把视口标签刷成设备真实分辨率，而不是固定的 720×1600。"""
+        try:
+            width, height = self.adb.physical_size()
+            self.record.viewport.setText(f"\u89c6\u53e3\uff1a{width} \u00d7 {height}")
+        except Exception:
+            pass
 
     def capture_screen(self):
         if not self.adb.serial:
@@ -1864,6 +2066,7 @@ class Workbench(QMainWindow):
         workers_running = any(worker.isRunning() for worker in self.workers)
         if self.close_when_idle and not self.execution_active and not workers_running:
             self.close_when_idle = False
+            scrcpy_stop(self.scrcpy_host.serial if self.scrcpy_host.serial else self.adb.serial)
             event.accept()
             return
         if self.dirty and QMessageBox.question(self, "退出", "当前修改尚未保存，确认退出吗？") != QMessageBox.StandardButton.Yes:
@@ -1880,21 +2083,40 @@ class Workbench(QMainWindow):
                 self.message_status.setText("正在等待后台操作完成，完成后自动退出...")
             event.ignore()
             return
+        scrcpy_stop(self.scrcpy_host.serial if self.scrcpy_host.serial else self.adb.serial)
         event.accept()
 
 
-def main():
+def main() -> int:
+    options, remaining = parse_cli(sys.argv[1:])
+
+    if options["run"] or options["help"] or options["version"]:
+        from pipeline_cli import attach_parent_console
+
+        attach_parent_console()
+
+    if options["help"]:
+        print(CLI_USAGE)
+        return 0
+    if options["version"]:
+        print(f"NnMaa {app_version()}")
+        return 0
+    if options["run"]:
+        from pipeline_cli import run_pipeline
+
+        return run_pipeline(options["run"], options["serial"])
+
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
-    application = QApplication(sys.argv)
-    application.setApplicationName("Qdd")
-    application.setApplicationDisplayName("Qdd")
+    application = QApplication([sys.argv[0], *remaining])
+    application.setApplicationName("NnMaa")
+    application.setApplicationDisplayName("NnMaa")
     if APP_ICON.is_file():
         application.setWindowIcon(QIcon(str(APP_ICON)))
     application.setStyle("Fusion")
     window = Workbench()
     window.show()
-    sys.exit(application.exec())
+    return application.exec()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

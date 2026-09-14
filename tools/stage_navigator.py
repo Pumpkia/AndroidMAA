@@ -284,6 +284,9 @@ def goto_stage(
 
 def _tap(adb, node: UiNode) -> None:
     x, y = node.action_center
+    if hasattr(adb, "inject_tap"):
+        adb.inject_tap(x, y)
+        return
     adb.shell(["input", "tap", str(x), str(y)])
 
 
@@ -296,6 +299,9 @@ def _swipe_list(adb, snapshot: UiSnapshot, direction: str) -> None:
         x, y = snapshot.width // 2, snapshot.height // 2
     delta = 480
     end_y = y - delta if direction == "up" else y + delta
+    if hasattr(adb, "inject_swipe"):
+        adb.inject_swipe(x, y, x, max(40, end_y), 320)
+        return
     adb.shell(["input", "swipe", str(x), str(y), str(x), str(max(40, end_y)), "320"])
 
 
