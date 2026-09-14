@@ -103,10 +103,12 @@ def assistant_root() -> Path:
       1. 环境变量 NNMAA_ROOT（旧名 QDD_ASSISTANT_ROOT 兼容；迁移 / 测试用）
       2. 向上逐级找 .nnmaa-root  → 该目录即根
       3. 向上逐级找 .nnmaa-app   → 该目录的父目录即根
-      4. 过渡兜底：向上找含 AndroidMAA/ 子目录的祖先（未放标记时）
+      4. 过渡兜底：向上找含 LEGACY_APP_DIR_NAME/ 子目录的祖先（未放标记时）
+         该常量刻意保留旧仓库目录名，勿改成 NnMaa —— 否则盘符根（E: 下的 NnMaa）会误命中，
+         把根解析成盘符本身
       5. 都找不到 → 明确报错，不猜测
 
-    源码模式：AndroidMAA/tools/app_paths.py  → 向上 2 级命中根标记
+    源码模式：app/tools/app_paths.py       → 向上 2 级命中根标记
     冻结模式：dist/NnMaa/NnMaa.exe               → 向上 4 级命中根标记
     """
 
@@ -132,7 +134,7 @@ def assistant_root() -> Path:
 
 
 def assistant_app_dir() -> Path:
-    """定位主程序目录（AndroidMAA 所在那一层）。放好 .nnmaa-app 后名字可任意改。"""
+    """定位主程序目录（当前为 app/，旧名 AndroidMAA）。放好 .nnmaa-app 后名字可任意改。"""
 
     override = _env(os.environ, APP_DIR_ENV, LEGACY_APP_DIR_ENV)
     if override:
