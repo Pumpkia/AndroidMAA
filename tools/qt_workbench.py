@@ -15,22 +15,22 @@ from datetime import datetime
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QThread, Signal
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
     QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
     QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
-    QSlider, QSpinBox, QStackedWidget, QStyle, QTableWidget, QTableWidgetItem,
+    QSizePolicy, QSlider, QSpinBox, QStackedWidget, QStyle, QTableWidget, QTableWidgetItem,
     QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from app_paths import APP_PATHS, initialize_data_layout
 from scrcpy_input import available as scrcpy_available
-from scrcpy_input import embed as scrcpy_embed
 from scrcpy_input import ensure_running as scrcpy_ensure_running
 from scrcpy_input import is_running as scrcpy_is_running
+from scrcpy_input import place_over_host as scrcpy_place_host
 from scrcpy_input import scrcpy_home
-from scrcpy_input import resize_embedded as scrcpy_resize
+from scrcpy_input import set_window_visible as scrcpy_set_visible
 from scrcpy_input import stop as scrcpy_stop
 from scrcpy_input import swipe as scrcpy_swipe
 from scrcpy_input import tap as scrcpy_tap
@@ -644,33 +644,110 @@ class ScrcpyHost(QWidget):
         super().__init__()
         self.serial = ""
         self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow)
-        self.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors)
         self.setMinimumWidth(280)
         self.setMinimumHeight(400)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._placeholder = QLabel("接入投屏后，手机画面显示在这里")
+        self._placeholder.setObjectName("muted")
+        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._placeholder.setWordWrap(True)
+        layout.addWidget(self._placeholder)
+        self._keep = QTimer(self)
+        self._keep.setInterval(250)
+        self._keep.timeout.connect(self._keep_embedded)
 
-    def attach(self, serial: str):
+    def attach(self, serial: str) -> bool:
         self.serial = serial
-        handle = int(self.winId())
-        scrcpy_embed(serial, handle, max(self.width(), 280), max(self.height(), 400))
+        self._placeholder.hide()
+        self.setVisible(True)
+        if not scrcpy_is_running(serial):
+            self._placeholder.show()
+            self._keep.stop()
+            return False
+        self._sync_overlay()
+        self._keep.start()
+        return True
+
+    def _owner_hwnd(self) -> int:
+        window = self.window()
+        return int(window.winId()) if window is not None else 0
+
+    def overlay_rect(self) -> tuple[int, int, int, int]:
+        dpr = float(self.devicePixelRatioF() or 1)
+        pos = self.mapToGlobal(QPoint(0, 0))
+        scaled = (
+            int(round(pos.x() * dpr)),
+            int(round(pos.y() * dpr)),
+            max(1, int(round(self.width() * dpr))),
+            max(1, int(round(self.height() * dpr))),
+        )
+        raw = (int(pos.x()), int(pos.y()), max(1, self.width()), max(1, self.height()))
+        return scaled if scaled[2] * scaled[3] >= raw[2] * raw[3] else raw
+
+    def _sync_overlay(self):
+        if not self.serial:
+            return
+        x, y, width, height = self.overlay_rect()
+        scrcpy_place_host(
+            self.serial,
+            int(self.winId()),
+            self._owner_hwnd(),
+            x,
+            y,
+            width,
+            height,
+        )
+
+    def _keep_embedded(self):
+        if not self.serial or not self.isVisible():
+            return
+        self._sync_overlay()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.serial:
+            scrcpy_set_visible(self.serial, True)
+            self._keep.start()
+            self._keep_embedded()
+
+    def hideEvent(self, event):
+        self._keep.stop()
+        if self.serial:
+            scrcpy_set_visible(self.serial, False)
+        super().hideEvent(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self.serial:
-            scrcpy_resize(self.serial, self.width(), self.height())
+            self._sync_overlay()
+
+    def sync(self):
+        if self.serial and self.isVisible():
+            self._keep_embedded()
 
 
-class DevicePane(QFrame):
-    def __init__(self, app, live_mirror=False):
+class MirrorPane(QFrame):
+    def __init__(self, app):
         super().__init__()
         self.app = app
-        self.live_mirror = live_mirror
+        self.setObjectName("devicePane")
+        self.setMinimumWidth(320)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         header = QHBoxLayout()
-        title = QLabel("设备预览" if not live_mirror else "投屏")
+        header.setContentsMargins(8, 6, 8, 6)
+        title = QLabel("投屏")
         title.setObjectName("sectionTitle")
         header.addWidget(title)
         header.addStretch()
+        self.connect_button = QPushButton("接入投屏")
+        self.connect_button.setProperty("compact", True)
+        self.connect_button.clicked.connect(app.open_scrcpy_recording)
+        header.addWidget(self.connect_button)
         shot = QToolButton()
         shot.setIcon(icon(shot, "device"))
         shot.setToolTip("获取设备截图")
@@ -678,45 +755,58 @@ class DevicePane(QFrame):
         header.addWidget(shot)
         layout.addLayout(header)
         self.mirror_status = QLabel("")
-        self.mirror_status.setObjectName("muted")
-        self.mirror_status.setWordWrap(True)
-        layout.addWidget(self.mirror_status)
-        if live_mirror:
-            open_mirror = QPushButton("接入投屏")
-            open_mirror.setObjectName("primaryButton")
-            open_mirror.clicked.connect(app.open_scrcpy_recording)
-            layout.addWidget(open_mirror)
-        self.phone = PhonePreview()
-        if live_mirror:
-            self.phone.hide()
-        else:
-            layout.addWidget(self.phone, 1)
+        self.mirror_status.hide()
+        layout.addWidget(app.scrcpy_host, 1)
         self.update_mirror_status()
 
-    def attach_mirror(self, serial: str):
+    def sizeHint(self):
+        return QSize(420, 800)
+
+    def _phone_size(self):
+        try:
+            width, height = self.app.adb.physical_size()
+            if width > 0 and height > 0:
+                return width, height
+        except Exception:
+            pass
+        return 1080, 2340
+
+    def apply_phone_width(self):
+        inner = max(self.height() - 36, 400)
+        phone_w, phone_h = self._phone_size()
+        width = max(320, min(int(inner * phone_w / phone_h), 720))
+        if abs(self.width() - width) > 8:
+            self.setFixedWidth(width)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.apply_phone_width()
+
+    def attach_mirror(self, serial: str) -> bool:
         if self.app.scrcpy_host is None or not serial:
-            return
-        self.app.scrcpy_host.attach(serial)
-        self.phone.hide()
+            return False
+        self.apply_phone_width()
+        ok = self.app.scrcpy_host.attach(serial)
         self.update_mirror_status()
+        QTimer.singleShot(0, self.app.scrcpy_host.sync)
+        return ok
 
     def update_mirror_status(self):
-        if not self.live_mirror:
-            self.mirror_status.setText("")
-            return
         serial = self.app.adb.serial
         if not serial:
-            self.mirror_status.setText("选择设备后，投屏会嵌在左侧")
+            self.mirror_status.setText("选择设备后点接入投屏")
+            self.connect_button.setText("接入投屏")
             return
-        if scrcpy_is_running(serial):
-            self.mirror_status.setText("投屏已嵌入本窗口。左侧实时操作，截图后在中间画布标注。")
+        if scrcpy_is_running(serial) or self.app.scrcpy_host.serial:
+            self.mirror_status.setText("左侧固定投屏，四个工作区共用")
+            self.connect_button.setText("重新接入")
             return
         if scrcpy_available():
-            self.mirror_status.setText("点「接入投屏」把手机画面嵌进本窗口")
+            self.mirror_status.setText("点接入投屏，画面固定在左侧")
+            self.connect_button.setText("接入投屏")
             return
-        self.mirror_status.setText(
-            f"首次接入会下载 scrcpy 到 {scrcpy_home()}，并检查更新"
-        )
+        self.mirror_status.setText(f"首次接入会下载 scrcpy 到 {scrcpy_home()}")
+        self.connect_button.setText("接入投屏")
 
 
 def tool(owner, icon_name, tip, callback):
@@ -845,11 +935,8 @@ class RecordPage(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        self.device = DevicePane(app, live_mirror=True)
-        self.device.setObjectName("devicePane")
-        root.addWidget(self.device, 32)
-        root.addWidget(self.build_canvas(), 37)
-        root.addWidget(self.build_inspector(), 31)
+        root.addWidget(self.build_canvas(), 55)
+        root.addWidget(self.build_inspector(), 45)
 
     def build_canvas(self):
         pane = QFrame()
@@ -1237,12 +1324,9 @@ class PlaybackPage(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        self.device = DevicePane(app)
-        self.device.setObjectName("devicePane")
-        root.addWidget(self.device, 38)
-        root.addWidget(self.build_library(), 15)
-        root.addWidget(self.build_queue(), 23)
-        root.addWidget(self.build_controls(), 24)
+        root.addWidget(self.build_library(), 28)
+        root.addWidget(self.build_queue(), 36)
+        root.addWidget(self.build_controls(), 36)
 
     def build_library(self):
         pane = QFrame()
@@ -1599,12 +1683,12 @@ class Workbench(QMainWindow):
         root.setSpacing(0)
         root.addWidget(self.build_topbar())
         self.scrcpy_host = ScrcpyHost()
-        self.scrcpy_host.setMinimumWidth(360)
+        self.mirror = MirrorPane(self)
         body = QWidget()
         body_layout = QHBoxLayout(body)
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
-        body_layout.addWidget(self.scrcpy_host, 0)
+        body_layout.addWidget(self.mirror, 0)
         self.pages = QStackedWidget()
         self.record = RecordPage(self)
         self.playback = PlaybackPage(self)
@@ -1806,7 +1890,6 @@ class Workbench(QMainWindow):
         self.assets.setEnabled(not active)
         for shortcut in self.idle_shortcuts:
             shortcut.setEnabled(not active)
-        self.playback.device.setEnabled(not active)
 
     def switch_page(self, index):
         if self.execution_active and index != self.pages.currentIndex():
@@ -1820,8 +1903,7 @@ class Workbench(QMainWindow):
             self.playback.refresh_library()
         if index == 2:
             self.semantic.load_job_context(self.document, self.current_path)
-        if index == 0:
-            self.record.device.update_mirror_status()
+        self.mirror.update_mirror_status()
         if index == 3:
             self.assets.refresh()
     def keep_worker(self, worker):
@@ -1882,13 +1964,12 @@ class Workbench(QMainWindow):
             self.adb.clear_recording_geometry()
             self.screen_image = None
             self.record.canvas.set_image(None)
-            self.record.device.phone.set_image(None)
-            self.playback.device.phone.set_image(None)
         self.semantic.device_changed(serial)
         connected = bool(serial)
         self.adb_status.setText(f"●  ADB：{'已连接' if connected else '未连接'}")
         self.adb_status.setStyleSheet(f"color: {'#22B455' if connected else '#A0A5AD'}")
-        self.record.device.update_mirror_status()
+        self.mirror.apply_phone_width()
+        self.mirror.update_mirror_status()
 
     def open_scrcpy_recording(self):
         if not self.adb.serial:
@@ -1902,20 +1983,23 @@ class Workbench(QMainWindow):
             )
             return
         serial = self.adb.serial
-        self.switch_page(0)
-        if scrcpy_is_running(serial):
-            self.record.device.attach_mirror(serial)
-            self.toast("投屏已嵌入左侧")
-            self._show_mirror_viewport(serial)
-            return
+        host = self.scrcpy_host
+        x, y, width, height = host.overlay_rect()
+        width, height = max(width, 360), max(height, 520)
         self.message_status.setText("正在接入投屏...")
+        scrcpy_stop(serial)
 
         def done(_result):
-            self.record.device.attach_mirror(serial)
-            self.toast("投屏已嵌入本窗口，可在左侧直接操作手机")
-            self._show_mirror_viewport(serial)
+            def attach():
+                if self.mirror.attach_mirror(serial):
+                    self.toast("投屏已固定在左侧，四个工作区共用")
+                    self._show_mirror_viewport(serial)
+                else:
+                    QMessageBox.warning(self, "投屏录制", "投屏已启动，但未能固定到左侧，请再点一次「接入投屏」。")
 
-        self.run_async(lambda: scrcpy_ensure_running(serial), done)
+            self.call_ui(attach)
+
+        self.run_async(lambda: scrcpy_ensure_running(serial, width, height, x, y), done)
 
     def _show_mirror_viewport(self, serial):
         """投屏连上后，把视口标签刷成设备真实分辨率，而不是固定的 720×1600。"""
@@ -1941,8 +2025,6 @@ class Workbench(QMainWindow):
             self.adb.recording_geometry = geometry
             self.screen_image = normalized
             self.record.canvas.set_image(normalized)
-            self.record.device.phone.set_image(normalized)
-            self.playback.device.phone.set_image(normalized)
             width, height = geometry.normalized_size
             self.document.device_size = [width, height]
             self.record.viewport.setText(f"\u89c6\u53e3\uff1a{width} \u00d7 {height}")
@@ -2061,6 +2143,11 @@ class Workbench(QMainWindow):
         workers_running = any(worker.isRunning() for worker in self.workers)
         if self.close_when_idle and not self.execution_active and not workers_running:
             self.close()
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        if self.scrcpy_host.serial:
+            self.scrcpy_host.sync()
 
     def closeEvent(self, event):
         workers_running = any(worker.isRunning() for worker in self.workers)

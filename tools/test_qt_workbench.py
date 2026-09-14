@@ -265,6 +265,18 @@ class VisualSystemTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_scrcpy_host_is_fixed_workbench_left_pane(self):
+        with patch.object(Workbench, "refresh_devices", lambda _window: None):
+            window = Workbench()
+        try:
+            self.assertIs(window.scrcpy_host.parent(), window.mirror)
+            self.assertFalse(hasattr(window.record, "device"))
+            self.assertFalse(hasattr(window.playback, "device"))
+            body = window.mirror.parentWidget()
+            self.assertIs(body.layout().itemAt(0).widget(), window.mirror)
+            self.assertIs(body.layout().itemAt(1).widget(), window.pages)
+        finally:
+            window.close()
 
 
 class SemanticStepEditorRoundTripTests(unittest.TestCase):

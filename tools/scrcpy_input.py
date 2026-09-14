@@ -18,6 +18,7 @@ import zipfile
 
 _PROCS: dict[str, subprocess.Popen] = {}
 _EMBEDDED: dict[str, Any] = {}
+_OVERLAY_READY: set[str] = set()
 _UPDATE_CHECKED = False
 GITHUB_API = "https://api.github.com/repos/Genymobile/scrcpy/releases/latest"
 FALLBACK_TAG = "v3.2"
@@ -26,6 +27,47 @@ FALLBACK_URL = "https://github.com/Genymobile/scrcpy/releases/download/v3.2/scrc
 
 def window_title(serial: str) -> str:
     return f"NnMaa-{serial}"
+
+
+_GWL_STYLE = -16
+_GWL_EXSTYLE = -20
+_WS_CHILD = 0x40000000
+_WS_VISIBLE = 0x10000000
+_WS_CLIPSIBLINGS = 0x04000000
+_WS_CLIPCHILDREN = 0x02000000
+_WS_CAPTION = 0x00C00000
+_WS_THICKFRAME = 0x00040000
+_WS_POPUP = 0x80000000
+_WS_SYSMENU = 0x00080000
+_WS_MINIMIZEBOX = 0x00020000
+_WS_MAXIMIZEBOX = 0x00010000
+_WS_EX_APPWINDOW = 0x00040000
+_WS_EX_WINDOWEDGE = 0x00000100
+_WS_EX_DLGMODALFRAME = 0x00000001
+_SWP_NOZORDER = 0x0004
+_SWP_NOACTIVATE = 0x0010
+_SWP_FRAMECHANGED = 0x0020
+_SWP_SHOWWINDOW = 0x0040
+_SW_SHOW = 5
+_SW_HIDE = 0
+_GWLP_HWNDPARENT = -8
+_WM_CLOSE = 0x0010
+
+
+def child_window_style(style: int) -> int:
+    drop = _WS_POPUP | _WS_CAPTION | _WS_THICKFRAME | _WS_SYSMENU | _WS_MINIMIZEBOX | _WS_MAXIMIZEBOX
+    value = (int(style) & 0xFFFFFFFF) | _WS_CHILD | _WS_VISIBLE | _WS_CLIPSIBLINGS | _WS_CLIPCHILDREN
+    return value & ~drop & 0xFFFFFFFF
+
+
+def child_window_exstyle(exstyle: int) -> int:
+    drop = _WS_EX_APPWINDOW | _WS_EX_WINDOWEDGE | _WS_EX_DLGMODALFRAME
+    return int(exstyle) & 0xFFFFFFFF & ~drop
+
+
+def overlay_window_style(style: int) -> int:
+    drop = _WS_CAPTION | _WS_THICKFRAME | _WS_SYSMENU | _WS_MINIMIZEBOX | _WS_MAXIMIZEBOX | _WS_CHILD
+    return (int(style) & 0xFFFFFFFF & ~drop) | _WS_POPUP | _WS_VISIBLE
 
 
 def map_device_to_client(
@@ -180,7 +222,12 @@ def ensure_installed() -> Path:
 
 
 def is_running(serial: str) -> bool:
-    return bool(serial) and _find_hwnd(window_title(serial)) is not None
+    if not serial:
+        return False
+    if _hwnd_for(serial):
+        return True
+    process = _PROCS.get(serial)
+    return process is not None and process.poll() is None
 
 
 def tap(serial: str, x: int, y: int, device_width: int, device_height: int) -> bool:
@@ -226,18 +273,29 @@ def read_scrcpy_version(executable: Path) -> tuple[int, int]:
     return parse_scrcpy_version(text)
 
 
-def launch_args(executable: Path, serial: str) -> list[str]:
+def launch_args(
+    executable: Path,
+    serial: str,
+    width: int = 0,
+    height: int = 0,
+    x: int | None = None,
+    y: int | None = None,
+) -> list[str]:
     args = [
         str(executable),
         "--serial",
         serial,
         "--stay-awake",
+        "--no-audio",
+        "--window-borderless",
         f"--window-title={window_title(serial)}",
     ]
+    if x is not None and y is not None:
+        args.extend([f"--window-x={int(x)}", f"--window-y={int(y)}"])
+    if int(width) > 0 and int(height) > 0:
+        args.extend([f"--window-width={int(width)}", f"--window-height={int(height)}"])
     major, minor = read_scrcpy_version(executable)
-    if (major, minor) >= (2, 0):
-        args.extend(["--no-audio", "--window-borderless"])
-    if (major, minor) >= (2, 4):
+    if (major, minor) >= (2, 4) or (major, minor) == (0, 0):
         args.extend(["--mouse=uhid", "--keyboard=uhid"])
     return args
 
@@ -315,13 +373,37 @@ def _drain_stderr(stream: Any, sink: list[str]) -> None:
         pass
 
 
-def ensure_running(serial: str) -> None:
-    if _find_hwnd(window_title(serial)):
+def ensure_running(
+    serial: str,
+    width: int = 0,
+    height: int = 0,
+    x: int | None = None,
+    y: int | None = None,
+) -> None:
+    process = _PROCS.get(serial)
+    alive = process is not None and process.poll() is None
+    hwnd = _hwnd_for(serial)
+    if hwnd and alive:
+        _hide_pid_consoles(process.pid)
         return
+    if hwnd and not alive:
+        _close_hwnd(hwnd)
+        _EMBEDDED.pop(serial, None)
+    if process is not None and process.poll() is None:
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            if _hwnd_for(serial):
+                _hide_pid_consoles(process.pid)
+                return
+            if process.poll() is not None:
+                break
+            time.sleep(0.2)
+        if _hwnd_for(serial):
+            _hide_pid_consoles(process.pid)
+            return
     executable = ensure_installed()
     if executable is None or not executable.is_file():
         raise RuntimeError("scrcpy 下载或安装失败")
-    # 清理上次超时遗留的僵尸 scrcpy 进程，避免它占住设备导致重试永远失败
     stale = _PROCS.pop(serial, None)
     if stale is not None and stale.poll() is None:
         stale.terminate()
@@ -330,13 +412,19 @@ def ensure_running(serial: str) -> None:
         except subprocess.TimeoutExpired:
             stale.kill()
         time.sleep(0.3)
+    _EMBEDDED.pop(serial, None)
+    leftover = _find_top_level(window_title(serial))
+    if leftover:
+        _close_hwnd(leftover)
     _assert_device_ready(serial)
-    args = launch_args(executable, serial)
+    args = launch_args(executable, serial, width, height, x, y)
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     process = subprocess.Popen(
         args,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         env=_launch_env(),
+        creationflags=flags,
     )
     _PROCS[serial] = process
     stderr_tail: list[str] = []
@@ -347,11 +435,13 @@ def ensure_running(serial: str) -> None:
             detail = "；".join(stderr_tail[-3:]) or "scrcpy 进程已退出"
             _PROCS.pop(serial, None)
             raise RuntimeError(detail[:400])
-        if _find_hwnd(window_title(serial)):
+        _hide_pid_consoles(process.pid)
+        if _hwnd_for(serial):
             time.sleep(0.4)
+            _hide_pid_consoles(process.pid)
+            _keep_one_window(serial)
             return
         time.sleep(0.25)
-    # 超时：杀掉卡住的进程（否则它会一直占着设备），并带上 stderr 诊断信息
     process.terminate()
     try:
         process.wait(timeout=3)
@@ -362,86 +452,464 @@ def ensure_running(serial: str) -> None:
     raise RuntimeError("scrcpy 窗口超时未出现" + (f"（scrcpy 输出：{detail[:300]}）" if detail else ""))
 
 
-def embed(serial: str, parent_hwnd: int, width: int, height: int) -> bool:
+def embed(serial: str, parent_hwnd: int, width: int, height: int, launch: bool = True) -> bool:
     if os.name != "nt":
         return False
-    ensure_running(serial)
-    hwnd = _find_hwnd(window_title(serial))
+    parent = _as_hwnd(parent_hwnd)
+    if not parent:
+        return False
+    if launch:
+        ensure_running(serial, width, height)
+    hwnd = _hwnd_for(serial, parent)
     if not hwnd:
         return False
-    import ctypes
-
-    user32 = ctypes.windll.user32
-    gwl_style = -16
-    ws_child = 0x40000000
-    ws_visible = 0x10000000
-    ws_popup = 0x80000000
-    ws_caption = 0x00C00000
-    ws_thickframe = 0x00040000
-    get_long = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
-    set_long = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
-    style = get_long(hwnd, gwl_style)
-    style = (style | ws_child | ws_visible) & ~ws_popup & ~ws_caption & ~ws_thickframe
-    set_long(hwnd, gwl_style, style)
-    # 重新应用窗口样式：改完 GWL_STYLE 后必须发 SWP_FRAMECHANGED，
-    # 否则 WS_CHILD 不会真正生效，子窗口处于「样式不一致」状态，鼠标/渲染都会出怪事。
-    swp_framechanged = 0x0020
-    swp_nomove = 0x0002
-    swp_nosize = 0x0001
-    swp_nozorder = 0x0004
-    swp_noactivate = 0x0010
-    user32.SetWindowPos(
-        hwnd, 0, 0, 0, 0, 0,
-        swp_framechanged | swp_nomove | swp_nosize | swp_nozorder | swp_noactivate,
-    )
-    user32.SetParent(hwnd, int(parent_hwnd))
-    user32.MoveWindow(hwnd, 0, 0, max(1, int(width)), max(1, int(height)), True)
-    _EMBEDDED[serial] = hwnd
-    return True
+    return _reparent(serial, hwnd, parent, width, height)
 
 
 def resize_embedded(serial: str, width: int, height: int) -> None:
     if os.name != "nt":
         return
-    import ctypes
-
-    hwnd = _EMBEDDED.get(serial) or _find_hwnd(window_title(serial))
+    hwnd = _hwnd_for(serial)
     if not hwnd:
         return
-    ctypes.windll.user32.MoveWindow(hwnd, 0, 0, max(1, int(width)), max(1, int(height)), True)
+    _user32().MoveWindow(hwnd, 0, 0, max(1, int(width)), max(1, int(height)), True)
 
 
 def stop(serial: str) -> None:
     if not serial:
         return
-    _EMBEDDED.pop(serial, None)
+    title = window_title(serial)
+    pids: set[int] = set()
     process = _PROCS.pop(serial, None)
     if process is not None and process.poll() is None:
-        process.terminate()
+        pids.add(process.pid)
+    cached = _as_hwnd(_EMBEDDED.pop(serial, None))
+    if cached:
+        pid = _pid_of(cached)
+        if pid:
+            pids.add(pid)
+        _close_hwnd(cached)
+    for hwnd in _find_all_hwnds(title):
+        pid = _pid_of(hwnd)
+        if pid:
+            pids.add(pid)
+        _close_hwnd(hwnd)
+    for pid in pids:
+        _terminate_pid(pid)
+    time.sleep(0.25)
+    for hwnd in _find_all_hwnds(title):
+        pid = _pid_of(hwnd)
+        _close_hwnd(hwnd)
+        if pid:
+            _terminate_pid(pid)
+    _OVERLAY_READY.discard(serial)
 
 
-def _find_hwnd(title: str) -> Any:
-    if os.name != "nt":
-        return None
+def host_screen_rect(hwnd: int) -> tuple[int, int, int, int]:
+    if os.name != "nt" or not hwnd:
+        return (0, 0, 0, 0)
     import ctypes
     from ctypes import wintypes
 
-    user32 = ctypes.windll.user32
-    found: list[int] = []
+    rect = wintypes.RECT()
+    _user32().GetWindowRect(hwnd, ctypes.byref(rect))
+    return rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top
 
-    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+def place_over_host(
+    serial: str,
+    host_hwnd: int,
+    owner_hwnd: int = 0,
+    x: int = 0,
+    y: int = 0,
+    width: int = 0,
+    height: int = 0,
+) -> bool:
+    gx, gy, gw, gh = host_screen_rect(host_hwnd)
+    if int(width) * int(height) > gw * gh:
+        gx, gy, gw, gh = int(x), int(y), int(width), int(height)
+    if gw <= 1 or gh <= 1:
+        return False
+    return place_over(serial, gx, gy, gw, gh, owner_hwnd)
+
+
+def place_over(serial: str, x: int, y: int, width: int, height: int, owner_hwnd: int = 0) -> bool:
+    if os.name != "nt" or not serial:
+        return False
+    hwnd = _keep_one_window(serial)
+    if not hwnd:
+        return False
+    user32 = _user32()
+    get_long, set_long = _style_funcs(user32)
+    if serial not in _OVERLAY_READY:
+        if _as_hwnd(user32.GetParent(hwnd)):
+            user32.SetParent(hwnd, 0)
+        set_long(hwnd, _GWL_STYLE, overlay_window_style(get_long(hwnd, _GWL_STYLE)))
+        set_long(hwnd, _GWL_EXSTYLE, child_window_exstyle(get_long(hwnd, _GWL_EXSTYLE)))
+        owner = _as_hwnd(owner_hwnd)
+        if owner:
+            set_long(hwnd, _GWLP_HWNDPARENT, owner)
+        user32.SetWindowPos(
+            hwnd, 0, int(x), int(y), max(1, int(width)), max(1, int(height)),
+            _SWP_FRAMECHANGED | _SWP_SHOWWINDOW | _SWP_NOZORDER | _SWP_NOACTIVATE,
+        )
+        _OVERLAY_READY.add(serial)
+    user32.SetWindowPos(
+        hwnd, 0, int(x), int(y), max(1, int(width)), max(1, int(height)),
+        _SWP_NOZORDER | _SWP_NOACTIVATE,
+    )
+    user32.MoveWindow(hwnd, int(x), int(y), max(1, int(width)), max(1, int(height)), True)
+    _EMBEDDED[serial] = hwnd
+    process = _PROCS.get(serial)
+    if process is not None and process.poll() is None:
+        _hide_pid_consoles(process.pid)
+    return True
+
+
+def set_window_visible(serial: str, visible: bool) -> None:
+    hwnd = _hwnd_for(serial)
+    if not hwnd:
+        return
+    _user32().ShowWindow(hwnd, _SW_SHOW if visible else _SW_HIDE)
+
+
+def _as_hwnd(value: Any) -> int:
+    if not value:
+        return 0
+    if isinstance(value, int):
+        return value
+    raw = getattr(value, "value", value)
+    if not raw:
+        return 0
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
+_USER32 = None
+_ENUM_PROC = None
+
+
+def _user32():
+    global _USER32, _ENUM_PROC
+    import ctypes
+    from ctypes import wintypes
+
+    if _USER32 is not None:
+        return _USER32
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    ptr = ctypes.c_ssize_t
+    hwnd = wintypes.HWND
+    user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    user32.FindWindowW.restype = hwnd
+    user32.SetParent.argtypes = [hwnd, hwnd]
+    user32.SetParent.restype = hwnd
+    user32.GetParent.argtypes = [hwnd]
+    user32.GetParent.restype = hwnd
+    user32.IsWindow.argtypes = [hwnd]
+    user32.IsWindow.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [hwnd]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.ShowWindow.argtypes = [hwnd, ctypes.c_int]
+    user32.ShowWindow.restype = wintypes.BOOL
+    user32.MoveWindow.argtypes = [hwnd, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.BOOL]
+    user32.MoveWindow.restype = wintypes.BOOL
+    user32.SetWindowPos.argtypes = [hwnd, hwnd, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    user32.GetWindowTextLengthW.argtypes = [hwnd]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [hwnd, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetClientRect.argtypes = [hwnd, wintypes.LPRECT]
+    user32.GetClientRect.restype = wintypes.BOOL
+    user32.GetWindowRect.argtypes = [hwnd, wintypes.LPRECT]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.ClientToScreen.argtypes = [hwnd, ctypes.POINTER(wintypes.POINT)]
+    user32.ClientToScreen.restype = wintypes.BOOL
+    user32.SetForegroundWindow.argtypes = [hwnd]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
+    user32.SetCursorPos.restype = wintypes.BOOL
+    user32.GetWindowThreadProcessId.argtypes = [hwnd, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.GetClassNameW.argtypes = [hwnd, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
+    user32.PostMessageW.argtypes = [hwnd, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.PostMessageW.restype = wintypes.BOOL
+    if ctypes.sizeof(ctypes.c_void_p) == 8:
+        user32.GetWindowLongPtrW.argtypes = [hwnd, ctypes.c_int]
+        user32.GetWindowLongPtrW.restype = ptr
+        user32.SetWindowLongPtrW.argtypes = [hwnd, ctypes.c_int, ptr]
+        user32.SetWindowLongPtrW.restype = ptr
+    user32.GetWindowLongW.argtypes = [hwnd, ctypes.c_int]
+    user32.GetWindowLongW.restype = wintypes.LONG
+    user32.SetWindowLongW.argtypes = [hwnd, ctypes.c_int, wintypes.LONG]
+    user32.SetWindowLongW.restype = wintypes.LONG
+    enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, hwnd, wintypes.LPARAM)
+    user32.EnumWindows.argtypes = [enum_proc, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.EnumChildWindows.argtypes = [hwnd, enum_proc, wintypes.LPARAM]
+    user32.EnumChildWindows.restype = wintypes.BOOL
+    _ENUM_PROC = enum_proc
+    _USER32 = user32
+    return user32
+
+
+def _style_funcs(user32):
+    import ctypes
+
+    if ctypes.sizeof(ctypes.c_void_p) == 8:
+        return user32.GetWindowLongPtrW, user32.SetWindowLongPtrW
+    return user32.GetWindowLongW, user32.SetWindowLongW
+
+
+def _window_title(hwnd: int) -> str:
+    import ctypes
+
+    user32 = _user32()
+    length = user32.GetWindowTextLengthW(hwnd) + 1
+    if length <= 1:
+        return ""
+    buffer = ctypes.create_unicode_buffer(length)
+    user32.GetWindowTextW(hwnd, buffer, length)
+    return buffer.value or ""
+
+
+def _title_matches(text: str, title: str) -> bool:
+    return bool(text) and (text == title or title in text)
+
+
+def _enum_proc():
+    _user32()
+    return _ENUM_PROC
+
+
+def _window_class(hwnd: int) -> str:
+    import ctypes
+
+    buffer = ctypes.create_unicode_buffer(256)
+    _user32().GetClassNameW(hwnd, buffer, 256)
+    return buffer.value or ""
+
+
+def _close_hwnd(hwnd: int) -> None:
+    if not hwnd:
+        return
+    user32 = _user32()
+    user32.PostMessageW(hwnd, _WM_CLOSE, 0, 0)
+    user32.ShowWindow(hwnd, _SW_HIDE)
+
+
+def _hide_pid_consoles(pid: int) -> None:
+    if os.name != "nt" or pid <= 0:
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = _user32()
+
+    @_enum_proc()
     def callback(hwnd, _lparam):
-        if not user32.IsWindowVisible(hwnd):
-            return True
-        length = user32.GetWindowTextLengthW(hwnd) + 1
-        buffer = ctypes.create_unicode_buffer(length)
-        user32.GetWindowTextW(hwnd, buffer, length)
-        if buffer.value == title or title in buffer.value:
-            found.append(hwnd)
+        handle = _as_hwnd(hwnd)
+        proc_id = wintypes.DWORD(0)
+        user32.GetWindowThreadProcessId(handle, ctypes.byref(proc_id))
+        if proc_id.value == pid and _window_class(handle) == "ConsoleWindowClass":
+            user32.ShowWindow(handle, _SW_HIDE)
         return True
 
     user32.EnumWindows(callback, 0)
-    return found[0] if found else None
+
+
+def _find_top_level(title: str) -> int:
+    if os.name != "nt":
+        return 0
+    user32 = _user32()
+    for cls in ("SDL_app", None):
+        hwnd = _as_hwnd(user32.FindWindowW(cls, title))
+        if hwnd and _window_class(hwnd) != "ConsoleWindowClass":
+            return hwnd
+    found: list[int] = []
+
+    @_enum_proc()
+    def callback(hwnd, _lparam):
+        handle = _as_hwnd(hwnd)
+        if handle and _window_class(handle) != "ConsoleWindowClass" and _title_matches(_window_title(handle), title):
+            found.append(handle)
+            return False
+        return True
+
+    user32.EnumWindows(callback, 0)
+    return found[0] if found else 0
+
+
+def _pid_of(hwnd: int) -> int:
+    if not hwnd:
+        return 0
+    import ctypes
+    from ctypes import wintypes
+
+    proc_id = wintypes.DWORD(0)
+    _user32().GetWindowThreadProcessId(hwnd, ctypes.byref(proc_id))
+    return int(proc_id.value)
+
+
+def _terminate_pid(pid: int) -> None:
+    if pid <= 0:
+        return
+    flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    subprocess.run(
+        ["taskkill", "/PID", str(pid), "/F", "/T"],
+        capture_output=True,
+        creationflags=flags,
+        timeout=5,
+    )
+
+
+def _find_all_hwnds(title: str) -> list[int]:
+    if os.name != "nt" or not title:
+        return []
+    user32 = _user32()
+    found: list[int] = []
+    seen: set[int] = set()
+
+    def consider(handle: int) -> None:
+        if not handle or handle in seen:
+            return
+        if _window_class(handle) == "ConsoleWindowClass":
+            return
+        if _title_matches(_window_title(handle), title):
+            seen.add(handle)
+            found.append(handle)
+
+    @_enum_proc()
+    def on_child(hwnd, _lparam):
+        consider(_as_hwnd(hwnd))
+        return True
+
+    @_enum_proc()
+    def on_top(hwnd, _lparam):
+        handle = _as_hwnd(hwnd)
+        consider(handle)
+        user32.EnumChildWindows(handle, on_child, 0)
+        return True
+
+    user32.EnumWindows(on_top, 0)
+    return found
+
+
+def _keep_one_window(serial: str) -> int:
+    matches = _find_all_hwnds(window_title(serial))
+    if not matches:
+        _EMBEDDED.pop(serial, None)
+        return 0
+    cached = _as_hwnd(_EMBEDDED.get(serial))
+    keep = cached if cached in matches else matches[0]
+    keep_pid = _pid_of(keep)
+    for extra in matches:
+        if extra == keep:
+            continue
+        extra_pid = _pid_of(extra)
+        _close_hwnd(extra)
+        if extra_pid and extra_pid != keep_pid:
+            _terminate_pid(extra_pid)
+    _EMBEDDED[serial] = keep
+    return keep
+
+
+def _find_by_pid(pid: int, title: str) -> int:
+    if os.name != "nt" or pid <= 0:
+        return 0
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = _user32()
+    found: list[int] = []
+
+    @_enum_proc()
+    def callback(hwnd, _lparam):
+        handle = _as_hwnd(hwnd)
+        proc_id = wintypes.DWORD(0)
+        user32.GetWindowThreadProcessId(handle, ctypes.byref(proc_id))
+        if (
+            proc_id.value == pid
+            and _window_class(handle) != "ConsoleWindowClass"
+            and _title_matches(_window_title(handle), title)
+        ):
+            found.append(handle)
+            return False
+        return True
+
+    user32.EnumWindows(callback, 0)
+    return found[0] if found else 0
+
+
+def _find_child(parent: int, title: str) -> int:
+    if os.name != "nt" or not parent:
+        return 0
+    user32 = _user32()
+    found: list[int] = []
+
+    @_enum_proc()
+    def callback(hwnd, _lparam):
+        handle = _as_hwnd(hwnd)
+        if handle and _title_matches(_window_title(handle), title):
+            found.append(handle)
+            return False
+        return True
+
+    user32.EnumChildWindows(parent, callback, 0)
+    return found[0] if found else 0
+
+
+def _hwnd_for(serial: str, parent_hwnd: int = 0) -> int:
+    if os.name != "nt" or not serial:
+        return 0
+    user32 = _user32()
+    cached = _as_hwnd(_EMBEDDED.get(serial))
+    if cached and user32.IsWindow(cached):
+        return cached
+    title = window_title(serial)
+    hwnd = _find_top_level(title)
+    if hwnd:
+        return hwnd
+    parent = _as_hwnd(parent_hwnd)
+    if parent:
+        hwnd = _find_child(parent, title)
+        if hwnd:
+            return hwnd
+    process = _PROCS.get(serial)
+    if process is not None and process.poll() is None:
+        return _find_by_pid(process.pid, title)
+    return 0
+
+
+def _reparent(serial: str, hwnd: int, parent: int, width: int, height: int) -> bool:
+    user32 = _user32()
+    if not user32.IsWindow(hwnd) or not user32.IsWindow(parent):
+        return False
+    get_long, set_long = _style_funcs(user32)
+    if _as_hwnd(user32.GetParent(hwnd)) != parent:
+        user32.SetParent(hwnd, parent)
+        set_long(hwnd, _GWL_STYLE, child_window_style(get_long(hwnd, _GWL_STYLE)))
+        set_long(hwnd, _GWL_EXSTYLE, child_window_exstyle(get_long(hwnd, _GWL_EXSTYLE)))
+        set_long(parent, _GWL_STYLE, int(get_long(parent, _GWL_STYLE)) | _WS_CLIPCHILDREN)
+    client_w, client_h = _client_size(parent)
+    fit_w = max(1, client_w or int(width))
+    fit_h = max(1, client_h or int(height))
+    flags = _SWP_FRAMECHANGED | _SWP_SHOWWINDOW | _SWP_NOZORDER | _SWP_NOACTIVATE
+    user32.SetWindowPos(hwnd, 0, 0, 0, fit_w, fit_h, flags)
+    user32.MoveWindow(hwnd, 0, 0, fit_w, fit_h, True)
+    user32.ShowWindow(hwnd, _SW_SHOW)
+    if _as_hwnd(user32.GetParent(hwnd)) != parent:
+        return False
+    _EMBEDDED[serial] = hwnd
+    return True
+
+
+def _find_hwnd(title: str) -> Any:
+    hwnd = _find_top_level(title)
+    return hwnd or None
 
 
 def _client_size(hwnd) -> tuple[int, int]:
@@ -449,7 +917,7 @@ def _client_size(hwnd) -> tuple[int, int]:
     from ctypes import wintypes
 
     rect = wintypes.RECT()
-    ctypes.windll.user32.GetClientRect(hwnd, ctypes.byref(rect))
+    _user32().GetClientRect(hwnd, ctypes.byref(rect))
     return rect.right - rect.left, rect.bottom - rect.top
 
 
@@ -458,14 +926,12 @@ def _client_to_screen(hwnd, x: int, y: int) -> tuple[int, int]:
     from ctypes import wintypes
 
     point = wintypes.POINT(x, y)
-    ctypes.windll.user32.ClientToScreen(hwnd, ctypes.byref(point))
+    _user32().ClientToScreen(hwnd, ctypes.byref(point))
     return point.x, point.y
 
 
 def _foreground(hwnd) -> None:
-    import ctypes
-
-    user32 = ctypes.windll.user32
+    user32 = _user32()
     user32.ShowWindow(hwnd, 9)
     user32.SetForegroundWindow(hwnd)
     time.sleep(0.05)
@@ -558,7 +1024,7 @@ def _click_at_screen(screen_x: int, screen_y: int) -> None:
 
 
 def _click_window(serial: str, x: int, y: int, device_width: int, device_height: int) -> bool:
-    hwnd = _find_hwnd(window_title(serial))
+    hwnd = _hwnd_for(serial)
     if not hwnd:
         return False
     client_w, client_h = _client_size(hwnd)
@@ -578,7 +1044,7 @@ def _drag_window(
     device_height: int,
     duration_ms: int,
 ) -> bool:
-    hwnd = _find_hwnd(window_title(serial))
+    hwnd = _hwnd_for(serial)
     if not hwnd:
         return False
     client_w, client_h = _client_size(hwnd)
@@ -591,7 +1057,7 @@ def _drag_window(
     for index in range(1, steps + 1):
         px = int(s1[0] + (s2[0] - s1[0]) * index / steps)
         py = int(s1[1] + (s2[1] - s1[1]) * index / steps)
-        ctypes.windll.user32.SetCursorPos(px, py)
+        _user32().SetCursorPos(px, py)
         time.sleep(duration_ms / steps / 1000)
     _release()
     return True
