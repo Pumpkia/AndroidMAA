@@ -16,7 +16,7 @@ from datetime import datetime
 import cv2
 import numpy as np
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut
+from PySide6.QtGui import QColor, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
     QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
@@ -503,44 +503,6 @@ def write_png(path, image):
         return True
     except OSError:
         return False
-
-
-class PhonePreview(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.pixmap = None
-        self.setMinimumWidth(310)
-
-    def set_image(self, image):
-        self.pixmap = to_pixmap(image) if image is not None else None
-        self.update()
-
-    def paintEvent(self, _event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor("#F5F5F7"))
-        width = max(210, min(self.width() - 72, int((self.height() - 120) * .49)))
-        height = int(width / .49)
-        outer = QRect((self.width() - width) // 2, max(40, (self.height() - height) // 2), width, height)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#1C1C1E"))
-        painter.drawRoundedRect(outer, 42, 42)
-        screen = outer.adjusted(13, 13, -13, -13)
-        path = QPainterPath()
-        path.addRoundedRect(screen, 33, 33)
-        painter.save()
-        painter.setClipPath(path)
-        painter.fillRect(screen, QColor("#050505"))
-        if self.pixmap:
-            fitted = self.pixmap.scaled(screen.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-            painter.drawPixmap(screen.center().x() - fitted.width() // 2, screen.center().y() - fitted.height() // 2, fitted)
-        painter.restore()
-        painter.setBrush(QColor("#1C1C1E"))
-        painter.drawRoundedRect(QRect(outer.center().x() - 42, outer.top() + 13, 84, 24), 12, 12)
-        if not self.pixmap:
-            painter.setPen(QColor("#8E8E93"))
-            painter.setFont(QFont("Microsoft YaHei UI", 10))
-            painter.drawText(screen, Qt.AlignmentFlag.AlignCenter, "连接 ADB 设备并点击截图")
 
 
 class Canvas(QWidget):
@@ -1361,6 +1323,7 @@ class PlaybackPage(QWidget):
             user_resource_dir=APP_PATHS.user_resource_dir,
             user_data_dir=APP_PATHS.data_dir,
         )
+        self.runner.module_validate = app.module_registry.validate_document
         self.stop_requested = False
         self.mutable_controls = []
         self.log_signal.connect(self.append_log)

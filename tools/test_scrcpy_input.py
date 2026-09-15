@@ -34,7 +34,7 @@ class ScrcpyMappingTests(unittest.TestCase):
         self.assertGreaterEqual(x, 0)
         self.assertLessEqual(y, 1400)
 
-    def test_parses_version_and_omits_uhid_before_2_4(self):
+    def test_parses_scrcpy_version_tags(self):
         self.assertEqual(parse_scrcpy_version("scrcpy 2.0 <https://github.com/Genymobile/scrcpy>"), (2, 0))
         self.assertEqual(parse_scrcpy_version("scrcpy 2.4"), (2, 4))
         from scrcpy_input import version_from_tag

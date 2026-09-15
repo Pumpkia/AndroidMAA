@@ -1,4 +1,4 @@
-"""通过 scrcpy 投屏窗口发送点击（优先 --mouse=uhid）。"""
+"""通过 scrcpy 投屏窗口发送点击（失败则由工作台退回 adb input）。"""
 
 from __future__ import annotations
 

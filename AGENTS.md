@@ -7,7 +7,7 @@
 - Keep `README.md` and `界面功能说明.md` aligned with behavior that exists in the active Qt entry point.
 - The asset workspace is `tools/asset_page.py` with catalog logic in `tools/asset_model.py`.
 - Stage recognition and chapter-list navigation live in `tools/stage_model.py` and `tools/stage_navigator.py`.
-- Workbench taps go through `tools/scrcpy_input.py` (scrcpy `--mouse=uhid`) when enabled; tests set `NNMAA_USE_SCRCPY=0`.
+- Workbench taps go through `tools/scrcpy_input.py` (scrcpy overlay click, falling back to `adb input tap`); tests set `NNMAA_USE_SCRCPY=0`. Do not pass `--mouse=uhid` or `--keyboard=uhid` (they can kill the game).
 
 ## Safety
 
