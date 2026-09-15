@@ -25,10 +25,10 @@ from qt_workbench import (
     normalize_recording_image,
     run_job_with_retry,
     run_playback_queue,
+    step_detail,
     write_png,
 )
 from job_model import JobDocument, JobStep
-from semantic_navigator import NamedRegion, SemanticMap, UiNode
 
 
 class FakeRunner:
@@ -247,29 +247,20 @@ class VisualSystemTests(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QFrame, "modeSwitcher"))
             self.assertIn("#0066CC", window.styleSheet())
             self.assertIn("#modeSwitcher", window.styleSheet())
-            semantic = window.semantic
-            self.assertEqual(semantic.scan_table.columnCount(), 5)
+            self.assertFalse(hasattr(window, "semantic"))
+            self.assertEqual(window.record.steps.columnCount(), 5)
             self.assertEqual(
-                [semantic.region_type.itemData(index) for index in range(3)],
-                ["click", "check", "recognize"],
+                [window.record.steps.horizontalHeaderItem(index).text() for index in range(5)],
+                ["#", "名称", "识别", "动作", "详情"],
             )
-            semantic.region_type.setCurrentIndex(1)
-            self.assertFalse(semantic.destination.isEnabled())
-            semantic.set_busy(True)
-            semantic.set_busy(False)
-            self.assertFalse(semantic.destination.isEnabled())
-            semantic.region_type.setCurrentIndex(0)
-            self.assertTrue(semantic.destination.isEnabled())
-            self.assertFalse(semantic.test_tap_button.isEnabled())
             self.assertTrue(
                 all(table.alternatingRowColors() for table in window.findChildren(QTableWidget))
             )
             for index, expected in enumerate(
                 (
-                    (True, False, False, False),
-                    (False, True, False, False),
-                    (False, False, True, False),
-                    (False, False, False, True),
+                    (True, False, False),
+                    (False, True, False),
+                    (False, False, True),
                 )
             ):
                 window.switch_page(index)
@@ -277,7 +268,6 @@ class VisualSystemTests(unittest.TestCase):
                     (
                         window.record_button.isChecked(),
                         window.play_button.isChecked(),
-                        window.semantic_button.isChecked(),
                         window.asset_button.isChecked(),
                     ),
                     expected,
@@ -328,18 +318,17 @@ class SemanticStepEditorRoundTripTests(unittest.TestCase):
         window = self.make_window(steps)
 
         try:
-            expected_labels = ("\u8bed\u4e49\u70b9\u51fb", "\u8bed\u4e49\u68c0\u67e5", "\u8bed\u4e49\u8bc6\u522b")
             self.assertEqual(
                 [window.record.steps.item(row, 2).text() for row in range(3)],
-                list(expected_labels),
+                ["OCR", "OCR", "OCR"],
             )
-            for row, (purpose, label) in enumerate(
-                zip(("click", "check", "recognize"), expected_labels)
-            ):
+            self.assertEqual(
+                [window.record.steps.item(row, 3).text() for row in range(3)],
+                ["点击", "等待", "等待"],
+            )
+            for row, purpose in enumerate(("click", "check", "recognize")):
                 window.record.steps.selectRow(row)
-                window.record.name.setText(f"{label}-\u5df2\u7f16\u8f91")
-
-                self.assertEqual(window.record.purpose_info.text(), label)
+                window.record.name.setText(f"{purpose}-\u5df2\u7f16\u8f91")
                 self.assertFalse(window.record.recognition.isEnabled())
                 self.assertFalse(window.record.action.isEnabled())
 
@@ -349,7 +338,7 @@ class SemanticStepEditorRoundTripTests(unittest.TestCase):
 
                 updated = window.document.steps[row]
                 self.assertEqual(updated.semantic_purpose, purpose)
-                self.assertEqual(updated.name, f"{label}-\u5df2\u7f16\u8f91")
+                self.assertEqual(updated.name, f"{purpose}-\u5df2\u7f16\u8f91")
                 self.assertEqual(updated.validate(), [])
         finally:
             window.set_dirty(False)
@@ -628,112 +617,33 @@ class WorkbenchCaptureAndRaceTests(unittest.TestCase):
         finally:
             self.close_window(window)
 
-    def test_semantic_scan_discards_stale_serial_and_checks_delayed_close(self):
+    def test_step_list_shows_recognition_action_and_detail(self):
         window = self.make_window()
-        callbacks = {}
-        active = []
-        finished = []
-        window.adb.serial = "first"
-        window.adb.for_serial = lambda _serial: SimpleNamespace()
-        window.set_execution_active = lambda *args: active.append(args)
-        window.finish_close_if_requested = lambda: finished.append(True)
-        window.run_async = lambda operation, done=None, failed=None: callbacks.update(
-            operation=operation, done=done, failed=failed
-        )
-
         try:
-            window.semantic.scan()
-            window.adb.serial = "second"
-            callbacks["done"]((True, object()))
-
-            self.assertIsNone(window.semantic.snapshot)
-            self.assertEqual(window.semantic.state.text(), "\u8bbe\u5907\u5df2\u5207\u6362")
-            self.assertIn(
-                "\u5df2\u4e22\u5f03\u65e7\u626b\u63cf\u7ed3\u679c",
-                window.semantic.log.toPlainText(),
-            )
-            self.assertEqual(active, [(True, "semantic_scan"), (False,)])
-            self.assertEqual(finished, [True])
-        finally:
-            self.close_window(window)
-
-    def test_semantic_preview_success_checks_delayed_close(self):
-        window = self.make_window()
-        callbacks = {}
-        active = []
-        finished = []
-        toasts = []
-        taps = []
-        window.adb.serial = "device"
-        window.adb.for_serial = lambda _serial: SimpleNamespace(
-            shell=lambda args: taps.append(args)
-        )
-        window.set_execution_active = lambda *args: active.append(args)
-        window.finish_close_if_requested = lambda: finished.append(True)
-        window.toast = toasts.append
-        window.run_async = lambda operation, done=None, failed=None: callbacks.update(
-            operation=operation, done=done, failed=failed
-        )
-        window.semantic.snapshot_serial = "device"
-        window.semantic.nodes = [UiNode(
-            text="\u767b\u5f55",
-            content_desc="",
-            resource_id="",
-            class_name="android.view.View",
-            bounds=(100, 200, 300, 260),
-            clickable=True,
-            action_bounds=(80, 180, 320, 300),
-        )]
-        window.semantic.populate_nodes()
-        window.semantic.scan_table.setCurrentCell(0, 0)
-
-        try:
-            window.semantic.preview_selected_node()
-            callbacks["done"](callbacks["operation"]())
-
-            self.assertEqual(taps, [["input", "tap", "200", "240"]])
-            self.assertEqual(window.semantic.state.text(), "\u5df2\u8bd5\u70b9")
-            self.assertEqual(active, [(True, "semantic_preview"), (False,)])
-            self.assertEqual(finished, [True])
-            self.assertEqual(toasts, ["\u5df2\u8bd5\u70b9\uff1a\u767b\u5f55"])
-        finally:
-            self.close_window(window)
-
-    def test_semantic_execute_failure_checks_delayed_close(self):
-        window = self.make_window()
-        callbacks = {}
-        active = []
-        finished = []
-        window.adb.serial = "device"
-        window.adb.for_serial = lambda _serial: SimpleNamespace()
-        window.set_execution_active = lambda *args: active.append(args)
-        window.finish_close_if_requested = lambda: finished.append(True)
-        window.run_async = lambda operation, done=None, failed=None: callbacks.update(
-            operation=operation, done=done, failed=failed
-        )
-        window.semantic.semantic_map = SemanticMap([
-            NamedRegion(
-                "login", "\u767b\u5f55\u9875", "\u767b\u5f55",
-                action="click", text="\u767b\u5f55",
-                bounds_ratio=[.4, .2, .6, .25],
-                action_bounds_ratio=[.25, .15, .75, .3],
-            ),
-        ])
-        window.semantic.command.setText("\u70b9\u51fb\u767b\u5f55")
-
-        try:
-            window.semantic.execute_command()
-            with patch("semantic_navigator.QMessageBox.warning") as warning:
-                callbacks["done"]((False, "\u8bc6\u522b\u5931\u8d25"))
-
-            self.assertEqual(window.semantic.state.text(), "\u5931\u8d25")
-            self.assertIn(
-                "\u5931\u8d25\uff1a\u8bc6\u522b\u5931\u8d25",
-                window.semantic.log.toPlainText(),
-            )
-            self.assertEqual(active, [(True, "semantic"), (False,)])
-            self.assertEqual(finished, [True])
-            warning.assert_called_once()
+            window.document.steps = [
+                JobStep(
+                    name="点登录",
+                    recognition="TemplateMatch",
+                    action="Click",
+                    template="jobs/demo/login.png",
+                    target=[40, 80],
+                ),
+                JobStep(
+                    name="等标题",
+                    recognition="OCR",
+                    action="DoNothing",
+                    expected="大厅",
+                    roi=[10, 20, 100, 40],
+                ),
+            ]
+            window.record.refresh_steps(0)
+            self.assertEqual(window.record.step_count.text(), "2 步")
+            self.assertEqual(window.record.steps.item(0, 2).text(), "模板")
+            self.assertEqual(window.record.steps.item(0, 3).text(), "点击")
+            self.assertEqual(window.record.steps.item(0, 4).text(), "login.png · 40,80")
+            self.assertEqual(window.record.steps.item(1, 2).text(), "OCR")
+            self.assertEqual(window.record.steps.item(1, 3).text(), "等待")
+            self.assertEqual(step_detail(window.document.steps[1]), "大厅")
         finally:
             self.close_window(window)
 

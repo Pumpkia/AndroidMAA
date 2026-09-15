@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
     QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow,
     QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
-    QSizePolicy, QSlider, QSpinBox, QStackedWidget, QStyle, QTableWidget, QTableWidgetItem,
+    QSizePolicy, QSlider, QSpinBox, QSplitter, QStackedWidget, QStyle, QTableWidget, QTableWidgetItem,
     QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from app_paths import APP_PATHS, initialize_data_layout
@@ -36,11 +36,11 @@ from scrcpy_input import stop as scrcpy_stop
 from scrcpy_input import swipe as scrcpy_swipe
 from scrcpy_input import tap as scrcpy_tap
 from job_library import JobLibrary
+from maa_ocr import joined_text, recognize_text
 from job_model import JobDocument, JobStep, safe_name
 from job_runner import MaaJobRunner
 from asset_page import AssetPage
 from module_model import ModuleDefinition, ModuleRegistry
-from semantic_navigator import SemanticNavigatorPage
 
 
 
@@ -119,11 +119,34 @@ APP_ICON = ASSETS_DIR / "icons" / "nnmaa-icon.png"
 
 RECOGNITION_OPTIONS = (("\u6a21\u677f\u5339\u914d", "TemplateMatch"), ("\u6587\u5b57\u8bc6\u522b (OCR)", "OCR"), ("\u76f4\u63a5\u547d\u4e2d", "DirectHit"))
 ACTION_OPTIONS = (("\u70b9\u51fb", "Click"), ("\u8f93\u5165\u6587\u672c", "InputText"), ("\u6ed1\u52a8", "Swipe"), ("\u6309\u952e", "ClickKey"), ("\u7b49\u5f85", "DoNothing"))
-SEMANTIC_PURPOSE_LABELS = {
-    "click": "\u8bed\u4e49\u70b9\u51fb",
-    "check": "\u8bed\u4e49\u68c0\u67e5",
-    "recognize": "\u8bed\u4e49\u8bc6\u522b",
-}
+RECOGNITION_LABELS = {"TemplateMatch": "模板", "OCR": "OCR", "DirectHit": "直击"}
+ACTION_LABELS = {"Click": "点击", "InputText": "输入", "Swipe": "滑动", "ClickKey": "按键", "DoNothing": "等待"}
+
+
+def step_detail(step):
+    bits = []
+    if getattr(step, "recognition", "") == "TemplateMatch" and getattr(step, "template", ""):
+        bits.append(Path(str(step.template).replace("\\", "/")).name)
+    elif getattr(step, "recognition", "") == "OCR" and getattr(step, "expected", ""):
+        bits.append(step.expected)
+    action = getattr(step, "action", "")
+    target = getattr(step, "target", None)
+    roi = getattr(step, "roi", None)
+    if action == "Click":
+        point = target or roi
+        if point and len(point) >= 4:
+            bits.append(f"{point[0] + point[2] // 2},{point[1] + point[3] // 2}")
+        elif point and len(point) >= 2:
+            bits.append(f"{point[0]},{point[1]}")
+    elif action == "Swipe" and target and getattr(step, "swipe_end", None):
+        bits.append(f"{target[0]},{target[1]} → {step.swipe_end[0]},{step.swipe_end[1]}")
+    elif action == "InputText" and getattr(step, "input_text", ""):
+        bits.append(step.input_text)
+    elif action == "ClickKey":
+        bits.append(f"键 {getattr(step, 'key', '')}")
+    if not bits and roi and len(roi) >= 4:
+        bits.append(f"{roi[2]}×{roi[3]}")
+    return " · ".join(str(item) for item in bits) if bits else "—"
 
 
 @dataclass(frozen=True)
@@ -773,7 +796,7 @@ class MirrorPane(QFrame):
             self.connect_button.setText("接入投屏")
             return
         if scrcpy_is_running(serial) or self.app.scrcpy_host.serial:
-            self.mirror_status.setText("左侧固定投屏，四个工作区共用")
+            self.mirror_status.setText("左侧固定投屏，三个工作区共用")
             self.connect_button.setText("重新接入")
             return
         if scrcpy_available():
@@ -947,13 +970,17 @@ class RecordPage(QWidget):
         pane.setObjectName("rightPane")
         layout = QVBoxLayout(pane)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         bar = QHBoxLayout()
         bar.setContentsMargins(16, 10, 16, 4)
         title = QLabel("步骤列表")
         title.setObjectName("sectionTitle")
         bar.addWidget(title)
+        self.step_count = QLabel("0 步")
+        self.step_count.setObjectName("muted")
+        bar.addWidget(self.step_count)
         bar.addStretch()
-        for text, callback in (("新建", self.app.new_job), ("从用例库打开", self.app.open_job), ("保存到用例库", self.app.save_job), ("导出", self.app.export_pipeline)):
+        for text, callback in (("新建", self.app.new_job), ("打开", self.app.open_job), ("保存", self.app.save_job), ("导出", self.app.export_pipeline)):
             button = QPushButton(text)
             button.setProperty("compact", True)
             button.clicked.connect(callback)
@@ -985,18 +1012,53 @@ class RecordPage(QWidget):
         grid.addWidget(self.module_manage, 1, 3)
         self.refresh_module_selection()
         layout.addWidget(metadata)
-        self.steps = QTableWidget(0, 4)
-        self.steps.setHorizontalHeaderLabels(["#", "名称", "动作", "状态"])
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        list_host = QWidget()
+        list_layout = QVBoxLayout(list_host)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(0)
+        self.steps = QTableWidget(0, 5)
+        self.steps.setHorizontalHeaderLabels(["#", "名称", "识别", "动作", "详情"])
         self.steps.verticalHeader().hide()
         self.steps.setShowGrid(False)
         self.steps.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        for column, mode in ((0, QHeaderView.ResizeMode.ResizeToContents), (1, QHeaderView.ResizeMode.Stretch), (2, QHeaderView.ResizeMode.ResizeToContents), (3, QHeaderView.ResizeMode.ResizeToContents)):
+        self.steps.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.steps.setMinimumHeight(180)
+        for column, mode in (
+            (0, QHeaderView.ResizeMode.ResizeToContents),
+            (1, QHeaderView.ResizeMode.Stretch),
+            (2, QHeaderView.ResizeMode.ResizeToContents),
+            (3, QHeaderView.ResizeMode.ResizeToContents),
+            (4, QHeaderView.ResizeMode.Stretch),
+        ):
             self.steps.horizontalHeader().setSectionResizeMode(column, mode)
         self.steps.itemSelectionChanged.connect(self.load_selected)
-        layout.addWidget(self.steps, 36)
+        list_layout.addWidget(self.steps, 1)
+        actions = QHBoxLayout()
+        actions.setContentsMargins(12, 8, 12, 8)
+        add = QPushButton("添加")
+        add.setObjectName("primaryButton")
+        add.clicked.connect(self.add_step)
+        update = QPushButton("保存修改")
+        update.clicked.connect(self.update_step)
+        delete = QPushButton("删除")
+        delete.setProperty("danger", True)
+        delete.clicked.connect(self.delete_step)
+        actions.addWidget(add)
+        actions.addWidget(update)
+        actions.addWidget(delete)
+        actions.addStretch()
+        actions.addWidget(tool(self, "up", "上移步骤", lambda: self.move_step(-1)))
+        actions.addWidget(tool(self, "down", "下移步骤", lambda: self.move_step(1)))
+        list_layout.addLayout(actions)
+        splitter.addWidget(list_host)
+        props = QWidget()
+        props_layout = QVBoxLayout(props)
+        props_layout.setContentsMargins(0, 0, 0, 0)
+        props_layout.setSpacing(0)
         title = QLabel("步骤属性")
         title.setObjectName("propertyTitle")
-        layout.addWidget(title)
+        props_layout.addWidget(title)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -1005,8 +1067,6 @@ class RecordPage(QWidget):
         form.setContentsMargins(18, 10, 18, 8)
         form.setHorizontalSpacing(12)
         form.setVerticalSpacing(9)
-        self.purpose_info = QLabel("\u666e\u901a\u6b65\u9aa4")
-        self.purpose_info.setObjectName("selectionInfo")
         self.name = QLineEdit("步骤 1")
         self.recognition = QComboBox()
         for label, value in RECOGNITION_OPTIONS:
@@ -1015,6 +1075,16 @@ class RecordPage(QWidget):
         for label, value in ACTION_OPTIONS:
             self.action.addItem(label, value)
         self.expected = QLineEdit()
+        expected_host = QWidget()
+        expected_layout = QHBoxLayout(expected_host)
+        expected_layout.setContentsMargins(0, 0, 0, 0)
+        expected_layout.setSpacing(6)
+        expected_layout.addWidget(self.expected, 1)
+        ocr_button = QPushButton("MAA识别")
+        ocr_button.setProperty("compact", True)
+        ocr_button.setToolTip("用 MaaFramework OCR（GitHub MaaCommonAssets 模型）识别框选区域")
+        ocr_button.clicked.connect(self.recognize_ocr)
+        expected_layout.addWidget(ocr_button)
         self.input_text = QLineEdit()
         self.threshold = QSlider(Qt.Orientation.Horizontal)
         self.threshold.setRange(0, 100)
@@ -1037,9 +1107,8 @@ class RecordPage(QWidget):
         for widget in (self.roi_info, self.target_info):
             widget.setObjectName("muted")
         fields = (
-            ("\u7528\u9014", self.purpose_info),
             ("名称", self.name), ("识别", self.recognition), ("动作", self.action),
-            ("OCR 文字", self.expected), ("输入内容", self.input_text),
+            ("OCR 文字", expected_host), ("输入内容", self.input_text),
             ("匹配阈值", threshold_host), ("按键码", self.key),
             ("滑动时长", self.duration), ("执行前延迟", self.pre_delay),
             ("执行后延迟", self.post_delay), ("识别区域", self.roi_info),
@@ -1048,26 +1117,20 @@ class RecordPage(QWidget):
         for label, widget in fields:
             form.addRow(label, widget)
         scroll.setWidget(host)
-        layout.addWidget(scroll, 48)
-        actions = QGridLayout()
-        actions.setContentsMargins(16, 8, 16, 12)
-        add = QPushButton("添加步骤")
-        add.setObjectName("primaryButton")
-        add.clicked.connect(self.add_step)
-        update = QPushButton("保存选中修改")
-        update.clicked.connect(self.update_step)
-        delete = QPushButton("删除")
-        delete.setProperty("danger", True)
-        delete.clicked.connect(self.delete_step)
+        props_layout.addWidget(scroll, 1)
+        preview_row = QHBoxLayout()
+        preview_row.setContentsMargins(16, 8, 16, 12)
         preview = QPushButton("在设备上预览此动作")
         preview.setObjectName("primaryButton")
         preview.setIcon(icon(preview, "play"))
         preview.clicked.connect(self.preview_step)
-        buttons = (add, update, delete, tool(self, "up", "上移步骤", lambda: self.move_step(-1)), tool(self, "down", "下移步骤", lambda: self.move_step(1)))
-        for column, button in enumerate(buttons):
-            actions.addWidget(button, 0, column)
-        actions.addWidget(preview, 1, 0, 1, 5)
-        layout.addLayout(actions)
+        preview_row.addWidget(preview)
+        props_layout.addLayout(preview_row)
+        splitter.addWidget(props)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([280, 220])
+        layout.addWidget(splitter, 1)
         return pane
 
     def refresh_module_selection(self, selected_id=None):
@@ -1128,11 +1191,6 @@ class RecordPage(QWidget):
         self.target_info.setText("未选择")
         self.selection_info.setText("尚未选择识别区域或动作坐标")
 
-    def sync_semantic_context(self):
-        semantic = getattr(self.app, "semantic", None)
-        if semantic is not None and semantic.has_job_context:
-            semantic.load_job_context(self.app.document, self.app.current_path)
-
     def selection_changed(self, kind, value):
         if kind == "roi":
             self.roi_info.setText(", ".join(map(str, value)))
@@ -1187,7 +1245,6 @@ class RecordPage(QWidget):
         self.app.document.steps.append(step)
         self.refresh_steps(len(self.app.document.steps) - 1)
         self.name.setText(f"步骤 {len(self.app.document.steps) + 1}")
-        self.sync_semantic_context()
         self.app.set_dirty(True)
 
     def update_step(self):
@@ -1201,7 +1258,6 @@ class RecordPage(QWidget):
             return
         self.app.document.steps[row] = step
         self.refresh_steps(row)
-        self.sync_semantic_context()
         self.app.set_dirty(True)
 
     def delete_step(self):
@@ -1209,7 +1265,6 @@ class RecordPage(QWidget):
         if row >= 0:
             self.app.document.steps.pop(row)
             self.refresh_steps(min(row, len(self.app.document.steps) - 1))
-            self.sync_semantic_context()
             self.app.set_dirty(True)
 
     def move_step(self, offset):
@@ -1218,24 +1273,27 @@ class RecordPage(QWidget):
         if row >= 0 and 0 <= target < len(self.app.document.steps):
             self.app.document.steps[row], self.app.document.steps[target] = self.app.document.steps[target], self.app.document.steps[row]
             self.refresh_steps(target)
-            self.sync_semantic_context()
             self.app.set_dirty(True)
 
     def refresh_steps(self, select=-1):
-        names = {"Click": "点击", "InputText": "输入", "Swipe": "滑动", "ClickKey": "按键", "DoNothing": "等待"}
         self.steps.blockSignals(True)
         self.steps.setRowCount(len(self.app.document.steps))
+        if hasattr(self, "step_count"):
+            self.step_count.setText(f"{len(self.app.document.steps)} 步")
         for row, step in enumerate(self.app.document.steps):
-            purpose = SEMANTIC_PURPOSE_LABELS.get(step.semantic_purpose)
-            for column, value in enumerate((f"{row + 1:02d}", step.name, names.get(step.action, step.action), "就绪")):
+            values = (
+                f"{row + 1:02d}",
+                step.name,
+                RECOGNITION_LABELS.get(step.recognition, step.recognition),
+                ACTION_LABELS.get(step.action, step.action),
+                step_detail(step),
+            )
+            for column, value in enumerate(values):
                 self.steps.setItem(row, column, QTableWidgetItem(value))
-            if purpose:
-                self.steps.item(row, 2).setText(purpose)
         self.steps.blockSignals(False)
         if 0 <= select < self.steps.rowCount():
             self.steps.selectRow(select)
         else:
-            self.purpose_info.setText("\u666e\u901a\u6b65\u9aa4")
             self.recognition.setEnabled(True)
             self.action.setEnabled(True)
 
@@ -1244,8 +1302,6 @@ class RecordPage(QWidget):
         if not 0 <= row < len(self.app.document.steps):
             return
         step = self.app.document.steps[row]
-        purpose = SEMANTIC_PURPOSE_LABELS.get(step.semantic_purpose)
-        self.purpose_info.setText(purpose or "\u666e\u901a\u6b65\u9aa4")
         editable = not step.semantic_purpose
         self.recognition.setEnabled(editable)
         self.action.setEnabled(editable)
@@ -1263,6 +1319,32 @@ class RecordPage(QWidget):
         self.roi_info.setText(str(step.roi) if step.roi else "未框选")
         self.target_info.setText(str(step.target) if step.target else "未选择")
         self.canvas.update()
+
+    def recognize_ocr(self):
+        if self.app.screen_image is None:
+            QMessageBox.warning(self, "文字识别", "请先截图，再框选要识别的文字。")
+            return
+        image = self.app.screen_image
+        roi = self.canvas.roi
+        self.app.set_execution_active(True, "ocr")
+
+        def done(hits):
+            self.app.set_execution_active(False)
+            text = joined_text(hits)
+            self.expected.setText(text)
+            index = self.recognition.findData("OCR")
+            if index >= 0:
+                self.recognition.setCurrentIndex(index)
+            self.app.set_dirty(True)
+            self.app.toast(f"识别到：{text}")
+            self.app.finish_close_if_requested()
+
+        def failed(error):
+            self.app.set_execution_active(False)
+            QMessageBox.critical(self, "文字识别失败", error)
+            self.app.finish_close_if_requested()
+
+        self.app.run_async(lambda: recognize_text(image, roi), done, failed)
 
     def preview_step(self):
         if not self.app.adb.serial:
@@ -1698,11 +1780,9 @@ class Workbench(QMainWindow):
         self.pages = QStackedWidget()
         self.record = RecordPage(self)
         self.playback = PlaybackPage(self)
-        self.semantic = SemanticNavigatorPage(self, JOBS_DIR / "semantic_map.json")
         self.assets = AssetPage(self, APP_PATHS.game_asset_dir, JOBS_DIR / "clothing_memory.json")
         self.pages.addWidget(self.record)
         self.pages.addWidget(self.playback)
-        self.pages.addWidget(self.semantic)
         self.pages.addWidget(self.assets)
         body_layout.addWidget(self.pages, 1)
         root.addWidget(body, 1)
@@ -1743,15 +1823,10 @@ class Workbench(QMainWindow):
         self.play_button.setProperty("modeButton", True)
         self.play_button.clicked.connect(lambda: self.switch_page(1))
         mode_layout.addWidget(self.play_button)
-        self.semantic_button = QPushButton("语义导航")
-        self.semantic_button.setCheckable(True)
-        self.semantic_button.setProperty("modeButton", True)
-        self.semantic_button.clicked.connect(lambda: self.switch_page(2))
-        mode_layout.addWidget(self.semantic_button)
         self.asset_button = QPushButton("资产")
         self.asset_button.setCheckable(True)
         self.asset_button.setProperty("modeButton", True)
-        self.asset_button.clicked.connect(lambda: self.switch_page(3))
+        self.asset_button.clicked.connect(lambda: self.switch_page(2))
         mode_layout.addWidget(self.asset_button)
         layout.addWidget(modes)
         layout.addStretch()
@@ -1801,7 +1876,7 @@ class Workbench(QMainWindow):
         #centerPane { background: #FFFFFF; border-right: 1px solid #E5E5EA; }
         #rightPane { background: #F8F8FA; }
         #metadataBar { background: #F5F5F7; border-bottom: 1px solid #E5E5EA; }
-        #semanticPane { background: #FFFFFF; border-right: 1px solid #E5E5EA; }
+
         QSplitter::handle { background: #E5E5EA; width: 1px; }
         #brand { font-size: 18px; font-weight: 650; }
         #brandMark { background: #0066CC; color: white; font-size: 15px; font-weight: 700;
@@ -1867,7 +1942,6 @@ class Workbench(QMainWindow):
             ("Ctrl+1", lambda: self.switch_page(0)),
             ("Ctrl+2", lambda: self.switch_page(1)),
             ("Ctrl+3", lambda: self.switch_page(2)),
-            ("Ctrl+4", lambda: self.switch_page(3)),
             ("Ctrl+S", self.save_job),
             ("Ctrl+O", self.open_job),
         )
@@ -1886,7 +1960,6 @@ class Workbench(QMainWindow):
         self.execution_source = source if active else ""
         self.record_button.setEnabled(not active)
         self.play_button.setEnabled(not active)
-        self.semantic_button.setEnabled(not active)
         self.asset_button.setEnabled(not active)
         self.devices.setEnabled(not active)
         self.refresh_devices_button.setEnabled(not active)
@@ -1903,14 +1976,11 @@ class Workbench(QMainWindow):
         self.pages.setCurrentIndex(index)
         self.record_button.setChecked(index == 0)
         self.play_button.setChecked(index == 1)
-        self.semantic_button.setChecked(index == 2)
-        self.asset_button.setChecked(index == 3)
+        self.asset_button.setChecked(index == 2)
         if index == 1:
             self.playback.refresh_library()
-        if index == 2:
-            self.semantic.load_job_context(self.document, self.current_path)
         self.mirror.update_mirror_status()
-        if index == 3:
+        if index == 2:
             self.assets.refresh()
     def keep_worker(self, worker):
         self.workers.append(worker)
@@ -1970,7 +2040,6 @@ class Workbench(QMainWindow):
             self.adb.clear_recording_geometry()
             self.screen_image = None
             self.record.canvas.set_image(None)
-        self.semantic.device_changed(serial)
         connected = bool(serial)
         self.adb_status.setText(f"●  ADB：{'已连接' if connected else '未连接'}")
         self.adb_status.setStyleSheet(f"color: {'#22B455' if connected else '#A0A5AD'}")
@@ -1994,7 +2063,7 @@ class Workbench(QMainWindow):
         def done(_result):
             def attach():
                 if self.mirror.attach_mirror(serial):
-                    self.toast("投屏已固定在左侧，四个工作区共用")
+                    self.toast("投屏已固定在左侧，三个工作区共用")
                     self._show_mirror_viewport(serial)
                 else:
                     QMessageBox.warning(self, "投屏录制", "投屏已启动，但未能固定到左侧，请再点一次「接入投屏」。")
@@ -2047,7 +2116,6 @@ class Workbench(QMainWindow):
         self.document = JobDocument(name="\u65b0\u7528\u4f8b", category="\u9ed8\u8ba4")
         self.document.module_id = "recording"
         self.document.module_version = self.module_registry.get("recording").version
-        self.semantic.reset_generated_job()
         self.current_path = None
         self.record.case_name.setText(self.document.name)
         self.record.case_category.setText(self.document.category)
@@ -2070,7 +2138,6 @@ class Workbench(QMainWindow):
                 raise ValueError("\n".join(errors))
             self.document = document
             self.current_path = Path(path)
-            self.semantic.load_job_context(self.document, self.current_path)
             self.record.case_name.setText(self.document.name)
             self.record.case_category.setText(self.document.category)
             self.record.refresh_module_selection(self.document.module_id)
@@ -2108,7 +2175,6 @@ class Workbench(QMainWindow):
         try:
             self.document.save(path)
             self.current_path = path
-            self.semantic.load_job_context(self.document, self.current_path)
             self.set_dirty(False)
             self.playback.refresh_library()
             self.toast("已保存到用例库")

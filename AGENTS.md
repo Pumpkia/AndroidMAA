@@ -22,5 +22,5 @@
 
 - Run `python tools/validate_schema.py` after changing `assets/interface.json` or Pipeline resources.
 - Run `python -m unittest discover -s tools -p "test_*.py"` after changing data paths, job models, the library, the runner, or packaging behavior.
-- For UI changes, launch `python tools/qt_workbench.py` and verify recording, playback, semantic navigation, and asset pages. Use an ADB device when the change depends on device behavior.
+- For UI changes, launch `python tools/qt_workbench.py` and verify recording, playback, and asset pages. Use an ADB device when the change depends on device behavior.
 - Build Windows releases with Inno Setup 6 installed: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\build_release.ps1 -Version <version>`. The build must produce both the portable ZIP and Setup EXE.
