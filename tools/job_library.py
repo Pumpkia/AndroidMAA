@@ -304,12 +304,19 @@ class JobLibrary:
         return resolved
 
     def find_by_name(self, name: str) -> Path | None:
+        wanted = (name or "").strip()
+        if not wanted:
+            return None
+        wanted_key = safe_name(wanted)
         for path in self._iter_job_paths():
+            job_key = path.name[: -len(JOB_FILE_SUFFIX)] if path.name.endswith(JOB_FILE_SUFFIX) else path.stem
+            if job_key == wanted or safe_name(job_key) == wanted_key:
+                return path
             try:
                 document = JobDocument.load(path)
             except Exception:
                 continue
-            if document.name == name:
+            if document.name.strip() == wanted or safe_name(document.name) == wanted_key:
                 return path
         return None
 

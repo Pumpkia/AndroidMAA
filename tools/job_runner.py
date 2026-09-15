@@ -72,8 +72,11 @@ class EditorContextSink(ContextEventSink):
 MAA_COORDINATE_SHORT_SIDE = 720
 
 
-def controller_runtime_device_size(controller) -> list[int]:
-    if not controller.set_screenshot_target_short_side(MAA_COORDINATE_SHORT_SIDE):
+def controller_runtime_device_size(controller, short_side: int | None = None) -> list[int]:
+    side = int(short_side) if short_side else MAA_COORDINATE_SHORT_SIDE
+    if side < 1:
+        side = MAA_COORDINATE_SHORT_SIDE
+    if not controller.set_screenshot_target_short_side(side):
         raise RuntimeError("Failed to configure Maa screenshot coordinate size")
     screenshot_job = controller.post_screencap().wait()
     if not screenshot_job.succeeded:
@@ -221,7 +224,11 @@ class MaaJobRunner:
             raise RuntimeError("Maa ADB 控制器连接失败")
 
         emit("加载识别资源与模板")
-        runtime_device_size = controller_runtime_device_size(controller)
+        recorded = document.device_size if isinstance(document.device_size, list) else []
+        short_side = MAA_COORDINATE_SHORT_SIDE
+        if len(recorded) == 2 and all(isinstance(value, int) and value > 0 for value in recorded):
+            short_side = min(recorded)
+        runtime_device_size = controller_runtime_device_size(controller, short_side)
         emit(f"Maa coordinates: {runtime_device_size[0]} x {runtime_device_size[1]}")
 
         resource = Resource()

@@ -209,6 +209,26 @@ class AdbClientTests(unittest.TestCase):
 
         self.assertEqual(commands, [["input", "tap", "140", "220"]])
 
+    def test_execute_falls_back_to_adb_when_scrcpy_tap_fails(self):
+        client = AdbClient()
+        client.serial = "device"
+        client.physical_size = lambda: (1080, 2340)
+        commands = []
+        client.shell = lambda args: commands.append(args)
+        step = SimpleNamespace(
+            action="Click",
+            target=[10, 20],
+            semantic_purpose="",
+            pre_delay=0,
+            post_delay=0,
+        )
+        with (
+            patch("qt_workbench.scrcpy_available", return_value=True),
+            patch("qt_workbench.scrcpy_tap", return_value=False),
+        ):
+            client.execute(step)
+        self.assertEqual(commands, [["input", "tap", "10", "20"]])
+
 
 class VisualSystemTests(unittest.TestCase):
     @classmethod
@@ -353,16 +373,23 @@ class SemanticStepEditorRoundTripTests(unittest.TestCase):
 
 
 class RecordingCoordinateTests(unittest.TestCase):
-    def test_normalize_1080_by_2400_to_720_by_1600(self):
+    def test_normalize_1080_by_2400_keeps_device_pixels(self):
         raw = np.zeros((2400, 1080, 3), dtype=np.uint8)
 
         normalized, geometry = normalize_recording_image(raw)
 
-        self.assertEqual(normalized.shape[:2], (1600, 720))
+        self.assertEqual(normalized.shape[:2], (2400, 1080))
         self.assertEqual(raw.shape[:2], (2400, 1080))
         self.assertEqual(geometry.physical_size, (1080, 2400))
-        self.assertEqual(geometry.normalized_size, (720, 1600))
-        self.assertEqual(geometry.scale_to_physical, (1.5, 1.5))
+        self.assertEqual(geometry.normalized_size, (1080, 2400))
+        self.assertEqual(geometry.scale_to_physical, (1.0, 1.0))
+
+    def test_normalize_caps_short_side_at_1080(self):
+        raw = np.zeros((3200, 1440, 3), dtype=np.uint8)
+
+        normalized, geometry = normalize_recording_image(raw)
+
+        self.assertEqual(geometry.normalized_size, (1080, 2400))
 
     def test_adb_screenshot_keeps_physical_resolution(self):
         raw = np.zeros((2400, 1080, 3), dtype=np.uint8)
@@ -400,6 +427,25 @@ class RecordingCoordinateTests(unittest.TestCase):
             commands[1],
             ["input", "swipe", "150", "300", "450", "600", "500"],
         )
+
+    def test_execute_click_uses_roi_center_when_target_missing(self):
+        client = AdbClient()
+        client.serial = "device"
+        client.recording_geometry = RecordingGeometry((1080, 2400), (720, 1600))
+        commands = []
+        client.shell = lambda args: commands.append(args)
+        click = SimpleNamespace(
+            action="Click",
+            target=None,
+            roi=[100, 200, 80, 40],
+            semantic_purpose="",
+            pre_delay=0,
+            post_delay=0,
+        )
+
+        client.execute(click)
+
+        self.assertEqual(commands, [["input", "tap", "210", "330"]])
 
     def test_semantic_click_materializes_ratio_on_current_physical_screen(self):
         client = AdbClient()
@@ -450,13 +496,13 @@ class WorkbenchCaptureAndRaceTests(unittest.TestCase):
             window.capture_screen()
 
             self.assertEqual(serials, ["physical-device"])
-            self.assertEqual(window.screen_image.shape[:2], (1600, 720))
-            self.assertEqual(window.document.device_size, [720, 1600])
-            self.assertEqual(window.record.canvas.source_size.width(), 720)
-            self.assertEqual(window.record.canvas.source_size.height(), 1600)
+            self.assertEqual(window.screen_image.shape[:2], (2400, 1080))
+            self.assertEqual(window.document.device_size, [1080, 2400])
+            self.assertEqual(window.record.canvas.source_size.width(), 1080)
+            self.assertEqual(window.record.canvas.source_size.height(), 2400)
             self.assertEqual(
                 window.adb.recording_geometry.scale_to_physical,
-                (1.5, 1.5),
+                (1.0, 1.0),
             )
         finally:
             self.close_window(window)

@@ -29,6 +29,7 @@ from scrcpy_input import available as scrcpy_available
 from scrcpy_input import ensure_running as scrcpy_ensure_running
 from scrcpy_input import is_running as scrcpy_is_running
 from scrcpy_input import place_over_host as scrcpy_place_host
+from scrcpy_input import release_pointer_if_left as scrcpy_release_pointer
 from scrcpy_input import scrcpy_home
 from scrcpy_input import set_window_visible as scrcpy_set_visible
 from scrcpy_input import stop as scrcpy_stop
@@ -140,12 +141,17 @@ class RecordingGeometry:
         )
 
 
-def normalize_recording_image(image, short_side=720):
+RECORDING_SHORT_SIDE_CAP = 1080
+
+
+def normalize_recording_image(image, short_side=None):
     if image is None or image.ndim < 2:
         raise ValueError("Recording image is required")
+    physical_height, physical_width = image.shape[:2]
+    if short_side is None:
+        short_side = min(RECORDING_SHORT_SIDE_CAP, min(physical_width, physical_height))
     if short_side <= 0:
         raise ValueError("Recording short side must be positive")
-    physical_height, physical_width = image.shape[:2]
     if physical_width <= 0 or physical_height <= 0:
         raise ValueError("Recording image dimensions must be positive")
     factor = short_side / min(physical_width, physical_height)
@@ -431,19 +437,23 @@ class AdbClient:
     def inject_tap(self, x, y):
         x, y = int(round(x)), int(round(y))
         if scrcpy_available():
-            width, height = self.physical_size()
-            if not scrcpy_tap(self.serial, x, y, width, height):
-                raise RuntimeError("scrcpy 点击失败，请确认投屏窗口可见")
-            return
+            try:
+                width, height = self.physical_size()
+                if scrcpy_tap(self.serial, x, y, width, height):
+                    return
+            except Exception:
+                pass
         self.shell(["input", "tap", str(x), str(y)])
 
     def inject_swipe(self, x1, y1, x2, y2, duration=300):
         point = [int(round(value)) for value in (x1, y1, x2, y2)]
         if scrcpy_available():
-            width, height = self.physical_size()
-            if not scrcpy_swipe(self.serial, *point, width, height, duration):
-                raise RuntimeError("scrcpy 滑动失败，请确认投屏窗口可见")
-            return
+            try:
+                width, height = self.physical_size()
+                if scrcpy_swipe(self.serial, *point, width, height, duration):
+                    return
+            except Exception:
+                pass
         self.shell(["input", "swipe", *map(str, [*point, duration])])
 
     def execute(self, step):
@@ -451,16 +461,17 @@ class AdbClient:
             raise RuntimeError("请先选择已连接的 ADB 设备")
         if step.pre_delay:
             time.sleep(step.pre_delay / 1000)
-        if step.action == "Click" and step.target:
+        if step.action == "Click":
             point = None
             if getattr(step, "semantic_purpose", "") == "click":
                 point = self.semantic_target_to_physical(step)
+            if point is None and step.target:
+                point = self.recording_point_to_physical(click_target_point(step.target))
+            if point is None and step.roi:
+                point = self.recording_point_to_physical(click_target_point(step.roi))
             if point is None:
-                point = self.recording_point_to_physical(
-                    click_target_point(step.target)
-                )
-            x, y = point
-            self.inject_tap(x, y)
+                raise RuntimeError("请先在截图上选择点击位置或框选识别区")
+            self.inject_tap(*point)
         elif step.action == "Swipe" and step.target and step.swipe_end:
             begin = self.recording_point_to_physical(step.target)
             end = self.recording_point_to_physical(step.swipe_end)
@@ -472,7 +483,7 @@ class AdbClient:
         elif step.action == "DoNothing":
             pass
         else:
-            raise RuntimeError("当前步骤没有可预览的设备动作")
+            raise RuntimeError(f"当前步骤无法预览：动作={step.action or '空'}，请先选择点击/滑动位置")
         if step.post_delay:
             time.sleep(step.post_delay / 1000)
 
@@ -655,7 +666,7 @@ class ScrcpyHost(QWidget):
         self._placeholder.setWordWrap(True)
         layout.addWidget(self._placeholder)
         self._keep = QTimer(self)
-        self._keep.setInterval(250)
+        self._keep.setInterval(33)
         self._keep.timeout.connect(self._keep_embedded)
 
     def attach(self, serial: str) -> bool:
@@ -686,7 +697,7 @@ class ScrcpyHost(QWidget):
         raw = (int(pos.x()), int(pos.y()), max(1, self.width()), max(1, self.height()))
         return scaled if scaled[2] * scaled[3] >= raw[2] * raw[3] else raw
 
-    def _sync_overlay(self):
+    def _sync_overlay(self, force=False):
         if not self.serial:
             return
         x, y, width, height = self.overlay_rect()
@@ -698,12 +709,14 @@ class ScrcpyHost(QWidget):
             y,
             width,
             height,
+            force=force,
         )
 
     def _keep_embedded(self):
         if not self.serial or not self.isVisible():
             return
         self._sync_overlay()
+        scrcpy_release_pointer(self.serial)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -721,11 +734,11 @@ class ScrcpyHost(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self.serial:
-            self._sync_overlay()
+            self._sync_overlay(force=True)
 
-    def sync(self):
+    def sync(self, force=False):
         if self.serial and self.isVisible():
-            self._keep_embedded()
+            self._sync_overlay(force=force)
 
 
 class MirrorPane(QFrame):
@@ -1169,8 +1182,20 @@ class RecordPage(QWidget):
             self.target_info.setText(f"{value[0]} → {value[1]}")
             self.selection_info.setText(f"滑动轨迹：{value[0]} → {value[1]}")
 
+    def _combo_value(self, combo, options):
+        data = combo.currentData()
+        if data:
+            return data
+        text = (combo.currentText() or "").strip()
+        for label, value in options:
+            if text in {label, value}:
+                return value
+        return options[0][1] if options else ""
+
     def make_step(self, template="", semantic_purpose=""):
-        if self.recognition.currentData() == "TemplateMatch" and self.canvas.roi and self.app.screen_image is not None:
+        recognition = self._combo_value(self.recognition, RECOGNITION_OPTIONS)
+        action = self._combo_value(self.action, ACTION_OPTIONS)
+        if recognition == "TemplateMatch" and self.canvas.roi and self.app.screen_image is not None:
             x, y, width, height = self.canvas.roi
             crop = self.app.screen_image[y:y + height, x:x + width]
             relative = Path("jobs") / safe_name(self.app.document.name) / f"{safe_name(self.name.text(), 'step')}.png"
@@ -1178,12 +1203,16 @@ class RecordPage(QWidget):
             output.parent.mkdir(parents=True, exist_ok=True)
             if crop.size and write_png(output, crop):
                 template = relative.as_posix()
+        target = self.canvas.target
+        if target is None and action == "Click" and self.canvas.roi:
+            x, y, width, height = self.canvas.roi
+            target = [x + width // 2, y + height // 2]
         return JobStep(
             name=self.name.text().strip() or "新步骤",
             semantic_purpose=semantic_purpose,
-            recognition=self.recognition.currentData(), action=self.action.currentData(),
+            recognition=recognition, action=action,
             template=template, roi=self.canvas.roi, expected=self.expected.text(),
-            threshold=self.threshold.value() / 100, target=self.canvas.target,
+            threshold=self.threshold.value() / 100, target=target,
             swipe_end=self.canvas.swipe_end, input_text=self.input_text.text(),
             key=self.key.value(), duration=self.duration.value(),
             pre_delay=self.pre_delay.value(), post_delay=self.post_delay.value(),
@@ -1278,8 +1307,22 @@ class RecordPage(QWidget):
             QMessageBox.warning(self, "ADB 设备", "请先选择已连接的 ADB 设备。")
             return
         row = self.steps.currentRow()
-        step = self.app.document.steps[row] if 0 <= row < len(self.app.document.steps) else self.make_step()
-        if not self.validate_step(step):
+        step = self.make_step()
+        if 0 <= row < len(self.app.document.steps):
+            saved = self.app.document.steps[row]
+            step.name = saved.name or step.name
+            step.template = step.template or saved.template
+            step.semantic_purpose = saved.semantic_purpose or step.semantic_purpose
+            step.target = step.target or saved.target
+            step.roi = step.roi or saved.roi
+            step.swipe_end = step.swipe_end or saved.swipe_end
+            step.action = step.action or saved.action
+            step.recognition = step.recognition or saved.recognition
+        if step.action == "Click" and not step.target and not step.roi:
+            QMessageBox.warning(self, "动作预览", "请先选择点击位置或框选识别区。")
+            return
+        if step.action == "Swipe" and (not step.target or not step.swipe_end):
+            QMessageBox.warning(self, "动作预览", "请先画出滑动起点和终点。")
             return
         serial = self.app.adb.serial
         session = self.app.adb.for_serial(serial)
@@ -1976,11 +2019,7 @@ class Workbench(QMainWindow):
             QMessageBox.warning(self, "投屏录制", "请先选择 ADB 设备。")
             return
         if not scrcpy_available():
-            QMessageBox.warning(
-                self,
-                "投屏录制",
-                "未找到 scrcpy。请安装 2.4+ 并加入 PATH，或放到项目 scrcpy/scrcpy.exe。",
-            )
+            QMessageBox.warning(self, "投屏录制", "当前未启用 scrcpy 投屏。")
             return
         serial = self.adb.serial
         host = self.scrcpy_host
@@ -2147,7 +2186,12 @@ class Workbench(QMainWindow):
     def moveEvent(self, event):
         super().moveEvent(event)
         if self.scrcpy_host.serial:
-            self.scrcpy_host.sync()
+            self.scrcpy_host.sync(force=True)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.scrcpy_host.serial:
+            self.scrcpy_host.sync(force=True)
 
     def closeEvent(self, event):
         workers_running = any(worker.isRunning() for worker in self.workers)

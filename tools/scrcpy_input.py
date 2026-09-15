@@ -19,6 +19,7 @@ import zipfile
 _PROCS: dict[str, subprocess.Popen] = {}
 _EMBEDDED: dict[str, Any] = {}
 _OVERLAY_READY: set[str] = set()
+_LAST_PLACE: dict[str, tuple[int, int, int, int]] = {}
 _UPDATE_CHECKED = False
 GITHUB_API = "https://api.github.com/repos/Genymobile/scrcpy/releases/latest"
 FALLBACK_TAG = "v3.2"
@@ -44,10 +45,12 @@ _WS_MAXIMIZEBOX = 0x00010000
 _WS_EX_APPWINDOW = 0x00040000
 _WS_EX_WINDOWEDGE = 0x00000100
 _WS_EX_DLGMODALFRAME = 0x00000001
+_WS_EX_NOACTIVATE = 0x08000000
 _SWP_NOZORDER = 0x0004
 _SWP_NOACTIVATE = 0x0010
 _SWP_FRAMECHANGED = 0x0020
 _SWP_SHOWWINDOW = 0x0040
+_SWP_NOCOPYBITS = 0x0100
 _SW_SHOW = 5
 _SW_HIDE = 0
 _GWLP_HWNDPARENT = -8
@@ -68,6 +71,10 @@ def child_window_exstyle(exstyle: int) -> int:
 def overlay_window_style(style: int) -> int:
     drop = _WS_CAPTION | _WS_THICKFRAME | _WS_SYSMENU | _WS_MINIMIZEBOX | _WS_MAXIMIZEBOX | _WS_CHILD
     return (int(style) & 0xFFFFFFFF & ~drop) | _WS_POPUP | _WS_VISIBLE
+
+
+def overlay_window_exstyle(exstyle: int) -> int:
+    return child_window_exstyle(exstyle)
 
 
 def map_device_to_client(
@@ -294,9 +301,6 @@ def launch_args(
         args.extend([f"--window-x={int(x)}", f"--window-y={int(y)}"])
     if int(width) > 0 and int(height) > 0:
         args.extend([f"--window-width={int(width)}", f"--window-height={int(height)}"])
-    major, minor = read_scrcpy_version(executable)
-    if (major, minor) >= (2, 4) or (major, minor) == (0, 0):
-        args.extend(["--mouse=uhid", "--keyboard=uhid"])
     return args
 
 
@@ -503,6 +507,7 @@ def stop(serial: str) -> None:
         if pid:
             _terminate_pid(pid)
     _OVERLAY_READY.discard(serial)
+    _LAST_PLACE.pop(serial, None)
 
 
 def host_screen_rect(hwnd: int) -> tuple[int, int, int, int]:
@@ -524,46 +529,78 @@ def place_over_host(
     y: int = 0,
     width: int = 0,
     height: int = 0,
+    force: bool = False,
 ) -> bool:
     gx, gy, gw, gh = host_screen_rect(host_hwnd)
     if int(width) * int(height) > gw * gh:
         gx, gy, gw, gh = int(x), int(y), int(width), int(height)
     if gw <= 1 or gh <= 1:
         return False
-    return place_over(serial, gx, gy, gw, gh, owner_hwnd)
+    return place_over(serial, gx, gy, gw, gh, owner_hwnd, force=force)
 
 
-def place_over(serial: str, x: int, y: int, width: int, height: int, owner_hwnd: int = 0) -> bool:
+def place_over(
+    serial: str,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    owner_hwnd: int = 0,
+    force: bool = False,
+) -> bool:
     if os.name != "nt" or not serial:
         return False
     hwnd = _keep_one_window(serial)
     if not hwnd:
         return False
+    rect = (int(x), int(y), max(1, int(width)), max(1, int(height)))
+    owner = _as_hwnd(owner_hwnd)
+    if not force and _LAST_PLACE.get(serial) == rect:
+        release_pointer_if_left(serial)
+        return True
     user32 = _user32()
     get_long, set_long = _style_funcs(user32)
     if serial not in _OVERLAY_READY:
         if _as_hwnd(user32.GetParent(hwnd)):
             user32.SetParent(hwnd, 0)
         set_long(hwnd, _GWL_STYLE, overlay_window_style(get_long(hwnd, _GWL_STYLE)))
-        set_long(hwnd, _GWL_EXSTYLE, child_window_exstyle(get_long(hwnd, _GWL_EXSTYLE)))
-        owner = _as_hwnd(owner_hwnd)
+        set_long(hwnd, _GWL_EXSTYLE, overlay_window_exstyle(get_long(hwnd, _GWL_EXSTYLE)))
         if owner:
             set_long(hwnd, _GWLP_HWNDPARENT, owner)
-        user32.SetWindowPos(
-            hwnd, 0, int(x), int(y), max(1, int(width)), max(1, int(height)),
-            _SWP_FRAMECHANGED | _SWP_SHOWWINDOW | _SWP_NOZORDER | _SWP_NOACTIVATE,
-        )
         _OVERLAY_READY.add(serial)
-    user32.SetWindowPos(
-        hwnd, 0, int(x), int(y), max(1, int(width)), max(1, int(height)),
-        _SWP_NOZORDER | _SWP_NOACTIVATE,
-    )
-    user32.MoveWindow(hwnd, int(x), int(y), max(1, int(width)), max(1, int(height)), True)
+    flags = _SWP_NOZORDER | _SWP_NOACTIVATE | _SWP_SHOWWINDOW
+    if force:
+        flags |= _SWP_NOCOPYBITS | _SWP_FRAMECHANGED
+    user32.SetWindowPos(hwnd, 0, rect[0], rect[1], rect[2], rect[3], flags)
+    user32.MoveWindow(hwnd, rect[0], rect[1], rect[2], rect[3], True)
+    _LAST_PLACE[serial] = rect
     _EMBEDDED[serial] = hwnd
     process = _PROCS.get(serial)
     if process is not None and process.poll() is None:
         _hide_pid_consoles(process.pid)
     return True
+
+
+def release_pointer_if_left(serial: str) -> None:
+    if os.name != "nt" or not serial:
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    hwnd = _as_hwnd(_EMBEDDED.get(serial)) or _hwnd_for(serial)
+    if not hwnd:
+        return
+    user32 = _user32()
+    left, top, width, height = host_screen_rect(hwnd)
+    point = wintypes.POINT()
+    if not user32.GetCursorPos(ctypes.byref(point)):
+        return
+    if left <= point.x < left + width and top <= point.y < top + height:
+        return
+    captured = _as_hwnd(user32.GetCapture())
+    if captured == hwnd:
+        user32.ReleaseCapture()
+    user32.ClipCursor(None)
 
 
 def set_window_visible(serial: str, visible: bool) -> None:
@@ -625,6 +662,16 @@ def _user32():
     user32.GetClientRect.restype = wintypes.BOOL
     user32.GetWindowRect.argtypes = [hwnd, wintypes.LPRECT]
     user32.GetWindowRect.restype = wintypes.BOOL
+    user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+    user32.GetCursorPos.restype = wintypes.BOOL
+    user32.ReleaseCapture.argtypes = []
+    user32.ReleaseCapture.restype = wintypes.BOOL
+    user32.ClipCursor.argtypes = [wintypes.LPRECT]
+    user32.ClipCursor.restype = wintypes.BOOL
+    user32.GetCapture.argtypes = []
+    user32.GetCapture.restype = hwnd
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = hwnd
     user32.ClientToScreen.argtypes = [hwnd, ctypes.POINTER(wintypes.POINT)]
     user32.ClientToScreen.restype = wintypes.BOOL
     user32.SetForegroundWindow.argtypes = [hwnd]

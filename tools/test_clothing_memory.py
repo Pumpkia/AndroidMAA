@@ -70,6 +70,58 @@ class ClothingLedgerTests(unittest.TestCase):
         self.ledger.set_evolve_need("NZ-003", 2)
         self.assertEqual(self.ledger.next_job(), JOB_EVO_RARE)
 
+    def test_tree_lists_base_then_hua_then_rare(self):
+        roots = self.ledger.roots()
+        self.assertEqual(len(roots), 1)
+        self.assertEqual(roots[0].name, "姹紫嫣红")
+        hua = self.ledger.children_of(roots[0].id)
+        self.assertEqual([item.name for item in hua], ["姹紫嫣红·华丽"])
+        rare = self.ledger.children_of(hua[0].id)
+        self.assertEqual([item.name for item in rare], ["姹紫嫣红·珍稀"])
+
+    def test_add_item_uses_typed_name_only(self):
+        path = Path(self.temporary_directory.name) / "blank.json"
+        ledger = ClothingLedger(path, today=lambda: self.day)
+        ledger.chain = []
+        ledger.target = {"id": "", "name": "", "asset": ""}
+        base = ledger.add_item("冰雪恋诗", stage="8-支3")
+        self.assertEqual(base.name, "冰雪恋诗")
+        self.assertEqual(ledger.piece(base.id).tier, "base")
+        hua = ledger.add_item("冰雪恋诗·华丽", parent_id=base.id)
+        self.assertEqual(hua.name, "冰雪恋诗·华丽")
+        self.assertEqual(ledger.piece(hua.id).tier, "hua")
+        rare = ledger.add_item("冰雪恋诗·珍稀", parent_id=hua.id)
+        self.assertEqual(rare.name, "冰雪恋诗·珍稀")
+        self.assertEqual(ledger.piece(rare.id).tier, "rare")
+        with self.assertRaises(ValueError):
+            ledger.add_item("", parent_id=base.id)
+
+    def test_add_item_keeps_category_limit_and_independent_roots(self):
+        path = Path(self.temporary_directory.name) / "custom.json"
+        ledger = ClothingLedger(path, today=lambda: self.day)
+        ledger.chain = []
+        ledger.target = {"id": "", "name": "", "asset": ""}
+        first = ledger.add_item("冰雪恋诗", category="连衣裙", needed=4, stage="8-支3", daily_limit=5)
+        second = ledger.add_item("星之海", category="连衣裙", stage="8-支1", daily_limit=3)
+        self.assertEqual(first.category, "连衣裙")
+        self.assertEqual(first.needed, 4)
+        self.assertEqual(first.daily_limit, 5)
+        self.assertEqual([item.name for item in ledger.roots()], ["星之海", "冰雪恋诗"])
+        loaded = ClothingLedger(path, today=lambda: self.day)
+        stored = loaded.get(first.id)
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.category, "连衣裙")
+        self.assertEqual(stored.needed, 4)
+        self.assertEqual(stored.daily_limit, 5)
+        self.assertEqual(stored.parent_id, "")
+        self.assertEqual(loaded.get(second.id).parent_id, "")
+        child = loaded.add_item("冰雪恋诗·华丽", category="连衣裙", parent_id=first.id, needed=5)
+        self.assertEqual(child.parent_id, first.id)
+        self.assertEqual([item.name for item in loaded.children_of(first.id)], ["冰雪恋诗·华丽"])
+        loaded.remove(first.id)
+        self.assertEqual(loaded.get(child.id).parent_id, "")
+        self.assertIn(child.id, [item.id for item in loaded.roots()])
+
     def test_malformed_file_is_reported(self):
         self.path.write_text(json.dumps({"format_version": 1, "items": []}), encoding="utf-8")
         loaded = ClothingLedger(self.path, today=lambda: self.day)

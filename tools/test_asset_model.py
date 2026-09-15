@@ -5,7 +5,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from asset_model import ASSET_CATEGORIES, AssetLibrary
+from asset_model import ASSET_CATEGORIES, AssetLibrary, click_step_from_asset, templates_match
 from job_model import JobDocument, JobStep
 
 
@@ -69,6 +69,34 @@ class AssetLibraryTests(unittest.TestCase):
         self.library.delete(asset)
         self.assertFalse(asset.path.exists())
         self.assertEqual(self.library.list_assets("主界面"), [])
+
+    def test_template_match_and_click_step_use_image_bounds(self):
+        source = Path(self.temporary_directory.name) / "home.png"
+        source.write_bytes(PNG)
+        asset = self.library.import_file(source, "主界面", "大厅")
+        jobs_dir = Path(self.temporary_directory.name) / "jobs"
+        JobDocument(
+            name="大厅引用",
+            category="登录与大厅",
+            module_id="assets",
+            steps=[
+                JobStep(
+                    name="大厅",
+                    recognition="TemplateMatch",
+                    action="Click",
+                    template=asset.relative.replace("/", "\\"),
+                    roi=[0, 0, 10, 10],
+                    target=[1, 2],
+                )
+            ],
+        ).save(jobs_dir / "登录与大厅" / "slash.maa_job.json")
+        self.assertTrue(templates_match(r"assets\主界面\大厅.png", asset.relative))
+        self.assertEqual(len(self.library.find_references(jobs_dir, asset.relative)), 1)
+        step = click_step_from_asset(asset)
+        self.assertEqual(step.template, asset.relative)
+        self.assertEqual(step.roi, [0, 0, 1, 1])
+        self.assertEqual(step.target, [0, 0])
+        self.assertEqual(step.validate(), [])
 
 
 if __name__ == "__main__":

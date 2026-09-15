@@ -19,6 +19,7 @@ JOB_WAREHOUSE = "warehouse_nz_rare"
 DONE = "DONE"
 NO_TRIES = "NO_TRIES"
 TIER_LABELS = {"base": "原貌", "hua": "华丽", "rare": "珍稀"}
+TIER_CHILD = {"base": "hua", "hua": "rare"}
 DEFAULT_EVO_NEED = {"hua": 5, "rare": 4}
 
 
@@ -37,6 +38,8 @@ def nz_template() -> dict[str, Any]:
                 "tier": "base",
                 "keep": 1,
                 "have": 0,
+                "category": "连衣裙",
+                "parent_id": "",
                 "asset": "assets/dress/nz_base.png",
                 "source": {
                     "type": "stage",
@@ -51,6 +54,8 @@ def nz_template() -> dict[str, Any]:
                 "tier": "hua",
                 "keep": 1,
                 "have": 0,
+                "category": "连衣裙",
+                "parent_id": "NZ-001",
                 "asset": "assets/dress/nz_hua.png",
                 "source": {
                     "type": "evolve",
@@ -65,6 +70,8 @@ def nz_template() -> dict[str, Any]:
                 "tier": "rare",
                 "keep": 0,
                 "have": 0,
+                "category": "连衣裙",
+                "parent_id": "NZ-002",
                 "asset": "assets/dress/nz_rare.png",
                 "source": {
                     "type": "evolve",
@@ -106,6 +113,8 @@ class ChainPiece:
     have: int = 0
     source: ItemSource = field(default_factory=ItemSource)
     asset: str = ""
+    category: str = ""
+    parent_id: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ChainPiece":
@@ -234,6 +243,7 @@ class ClothingLedger:
             "asset": str(target.get("asset") or ""),
         }
         self.chain = loaded
+        self._fill_legacy_parents()
         self.daily = {
             "stage": str(daily.get("stage") or ""),
             "remain": int(daily.get("remain") or 0),
@@ -258,6 +268,8 @@ class ClothingLedger:
                     "tier": piece.tier,
                     "keep": piece.keep,
                     "have": piece.have,
+                    "category": piece.category,
+                    "parent_id": piece.parent_id or "",
                     "asset": piece.asset,
                     "source": asdict(piece.source),
                 }
@@ -274,24 +286,34 @@ class ClothingLedger:
         temporary.replace(self.path)
         self._rebuild_items()
 
-    def _rebuild_items(self) -> None:
-        items: list[ClothingItem] = []
+    def _fill_legacy_parents(self) -> None:
+        if any(piece.parent_id is not None for piece in self.chain):
+            for piece in self.chain:
+                if piece.parent_id is None:
+                    piece.parent_id = ""
+            return
         previous = ""
         for piece in self.chain:
+            piece.parent_id = previous
+            previous = piece.id
+
+    def _rebuild_items(self) -> None:
+        items: list[ClothingItem] = []
+        for piece in self.chain:
             need = piece.source.need if piece.source.type == "evolve" else max(piece.keep, 1)
+            daily_limit = int(piece.source.daily_limit or self.daily.get("limit") or 3)
             items.append(
                 ClothingItem(
                     id=piece.id,
                     name=piece.name,
-                    category=TIER_LABELS.get(piece.tier, piece.tier),
+                    category=piece.category,
                     needed=need if need else 1,
                     owned=piece.have,
                     stage=piece.source.stage if piece.source.type == "stage" else "",
-                    daily_limit=int(self.daily.get("limit") or 3),
-                    parent_id=previous,
+                    daily_limit=daily_limit,
+                    parent_id=piece.parent_id or "",
                 )
             )
-            previous = piece.id
         self.items = items
 
     def piece(self, item_id: str) -> ChainPiece | None:
@@ -435,19 +457,27 @@ class ClothingLedger:
         return item
 
     def stage_limit(self, stage: str) -> int:
-        if stage and stage == self.daily.get("stage"):
+        stage = (stage or "").strip()
+        for piece in self.chain:
+            if piece.source.type == "stage" and piece.source.stage.strip() == stage:
+                return int(piece.source.daily_limit or self.daily.get("limit") or 3)
+        if stage and stage == str(self.daily.get("stage") or "").strip():
             return int(self.daily.get("limit") or 3)
         return 3
 
     def used_today(self, stage: str) -> int:
         self.ensure_today()
-        if stage != self.daily.get("stage"):
+        stage = (stage or "").strip()
+        daily_stage = str(self.daily.get("stage") or "").strip()
+        if stage and daily_stage and stage != daily_stage:
             return 0
         return max(0, int(self.daily.get("limit") or 3) - int(self.daily.get("remain") or 0))
 
     def remaining(self, stage: str, daily_limit: int | None = None) -> int:
         self.ensure_today()
-        if not stage or stage != self.daily.get("stage"):
+        stage = (stage or "").strip()
+        daily_stage = str(self.daily.get("stage") or "").strip()
+        if stage and daily_stage and stage != daily_stage:
             return 0
         return max(0, int(self.daily.get("remain") or 0))
 
@@ -483,28 +513,46 @@ class ClothingLedger:
         daily_limit: int = 3,
         parent_id: str = "",
     ) -> ClothingItem:
-        tier = "base"
-        for key, label in TIER_LABELS.items():
-            if category == label or category == key:
-                tier = key
-        source = ItemSource(type="stage", stage=stage.strip(), daily_limit=daily_limit)
-        if stage.strip() == "":
-            source = ItemSource(type="evolve", need=needed, job="")
+        parent = self.piece(parent_id) if parent_id else None
+        if parent_id and parent is None:
+            raise ValueError("找不到上级衣服")
+        name = name.strip()
+        if not name:
+            raise ValueError("衣服名称不能为空")
+        if parent is not None:
+            tier = TIER_CHILD.get(parent.tier, "rare")
+        else:
+            tier = "base"
+        if tier == "base" or stage.strip():
+            source = ItemSource(type="stage", stage=stage.strip(), daily_limit=max(1, int(daily_limit)))
+            keep = max(0, int(needed))
+        else:
+            source = ItemSource(
+                type="evolve",
+                need=max(1, int(needed)),
+                job=JOB_EVO_HUA if tier == "hua" else JOB_EVO_RARE,
+            )
+            keep = 1 if tier == "hua" else 0
         piece = ChainPiece(
             id=uuid4().hex,
-            name=name.strip(),
+            name=name,
             tier=tier,
-            keep=max(0, needed - owned) if owned > needed else 0,
+            keep=keep,
             have=owned,
             source=source,
+            category=category.strip(),
+            parent_id=parent_id or "",
         )
-        if parent_id:
-            index = next((i for i, item in enumerate(self.chain) if item.id == parent_id), -1)
-            if index < 0:
-                raise ValueError("找不到上级衣服")
+        if source.type == "stage" and source.stage and not str(self.daily.get("stage") or "").strip():
+            self.daily["stage"] = source.stage
+            self.daily["limit"] = source.daily_limit
+        if parent is not None:
+            index = next((i for i, item in enumerate(self.chain) if item.id == parent.id), -1)
             self.chain.insert(index + 1, piece)
         else:
-            self.chain.append(piece)
+            self.chain.insert(0, piece)
+        if tier == "rare" or not self.target.get("id"):
+            self.target = {"id": piece.id, "name": piece.name, "asset": piece.asset}
         self.save()
         item = self.get(piece.id)
         if item is None:
@@ -525,9 +573,15 @@ class ClothingLedger:
             )
         piece.name = item.name.strip()
         piece.have = item.owned
+        piece.category = item.category.strip()
+        if item.parent_id:
+            piece.parent_id = item.parent_id
         if piece.source.type == "stage":
             piece.source.stage = item.stage.strip()
+            piece.source.daily_limit = max(1, int(item.daily_limit))
             piece.keep = item.needed
+            if piece.source.stage == str(self.daily.get("stage") or "").strip():
+                self.daily["limit"] = piece.source.daily_limit
         else:
             piece.source.need = item.needed
         self.save()
@@ -537,6 +591,11 @@ class ClothingLedger:
         return updated
 
     def remove(self, item_id: str) -> None:
+        piece = self.piece(item_id)
+        parent_id = piece.parent_id if piece is not None else ""
+        for child in self.chain:
+            if child.parent_id == item_id:
+                child.parent_id = parent_id
         self.chain = [item for item in self.chain if item.id != item_id]
         if self.target.get("id") == item_id:
             self.target = {"id": "", "name": "", "asset": ""}

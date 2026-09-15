@@ -30,9 +30,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asset_model import ASSET_CATEGORIES, AssetLibrary, GameAsset
+from asset_model import ASSET_CATEGORIES, AssetLibrary, GameAsset, click_step_from_asset
 from clothing_memory import JOB_FARM, ClothingItem, ClothingLedger
-from job_model import JobStep
 from semantic_navigator import scan_device
 from stage_model import parse_stage
 from stage_navigator import goto_stage, recognize_stage_screen
@@ -313,7 +312,7 @@ class AssetPage(QWidget):
         layout.addWidget(clear)
         layout.addWidget(recognize)
         layout.addWidget(go)
-        hint = QLabel("目标衣服可继续添加下级材料。同一关卡共用今日通过次数，跨天自动清零。前往此关会点左下角切换章节，滑动列表，再点章节右侧任意进度（1/12、4/12、12/12 等）展开明细。")
+        hint = QLabel("目录从上到下：原貌 → 华丽 → 珍稀。衣服名按图鉴填写，例如「姹紫嫣红·华丽」。同一关卡共用今日次数，跨天清零。")
         hint.setObjectName("muted")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -500,12 +499,7 @@ class AssetPage(QWidget):
             QMessageBox.warning(self, "加入用例", "请先选择资产。")
             return
         module = self.app.module_registry.get("assets")
-        step = JobStep(
-            name=asset.name,
-            recognition="TemplateMatch",
-            action="Click",
-            template=asset.relative,
-        )
+        step = click_step_from_asset(asset)
         errors = step.validate()
         if errors:
             QMessageBox.warning(self, "无法加入用例", "\n".join(errors))
@@ -540,7 +534,7 @@ class AssetPage(QWidget):
         usable = piece.consumable if piece is not None else max(0, item.owned - item.needed)
         node = QTreeWidgetItem(
             [
-                item.name if not item.category else f"{item.name}（{item.category}）",
+                item.name,
                 self.ledger.layer_label(item.id),
                 str(item.owned),
                 str(usable),

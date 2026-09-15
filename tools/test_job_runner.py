@@ -54,6 +54,15 @@ class RuntimeDeviceSizeTests(unittest.TestCase):
         self.assertTrue(job.waited)
         self.assertEqual(size, [720, 1280])
 
+    def test_uses_recorded_short_side(self):
+        job = FakeScreenshotJob(shape=(2340, 1080, 3))
+        controller = FakeController(job)
+
+        size = controller_runtime_device_size(controller, 1080)
+
+        self.assertEqual(controller.short_side, 1080)
+        self.assertEqual(size, [1080, 2340])
+
     def test_rejects_failed_screenshot(self):
         with self.assertRaisesRegex(RuntimeError, "capture"):
             controller_runtime_device_size(

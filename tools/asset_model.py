@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 from uuid import uuid4
 
-from job_model import JobDocument, safe_name
+from job_model import JobDocument, JobStep, safe_name
 
 
 ASSET_FORMAT_VERSION = 1
@@ -28,6 +28,61 @@ ASSET_CATEGORIES = (
     "关卡",
     "弹窗",
 )
+
+
+def _template_key(value: str) -> str:
+    return str(value or "").replace("\\", "/").strip().lstrip("./")
+
+
+def templates_match(left: str, right: str) -> bool:
+    first = _template_key(left)
+    second = _template_key(right)
+    if not first or not second:
+        return False
+    if first == second:
+        return True
+    left_path = Path(first)
+    right_path = Path(second)
+    if left_path.name != right_path.name:
+        return False
+    return first.endswith(second) or second.endswith(first)
+
+
+def read_image_size(path: Path) -> tuple[int, int] | None:
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return None
+    if data.startswith(b"\x89PNG") and len(data) >= 24:
+        import struct
+
+        width, height = struct.unpack(">II", data[16:24])
+        if width > 0 and height > 0:
+            return int(width), int(height)
+    try:
+        import cv2
+        import numpy as np
+
+        image = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_UNCHANGED)
+    except Exception:
+        return None
+    if image is None:
+        return None
+    return int(image.shape[1]), int(image.shape[0])
+
+
+def click_step_from_asset(asset: GameAsset) -> JobStep:
+    size = read_image_size(asset.path)
+    roi = [0, 0, size[0], size[1]] if size else None
+    target = [size[0] // 2, size[1] // 2] if size else None
+    return JobStep(
+        name=asset.name,
+        recognition="TemplateMatch",
+        action="Click",
+        template=asset.relative,
+        roi=roi,
+        target=target,
+    )
 
 
 @dataclass(frozen=True)
@@ -114,7 +169,7 @@ class AssetLibrary:
                 document = JobDocument.load(path)
             except Exception:
                 continue
-            if any(step.template == relative for step in document.steps):
+            if any(templates_match(step.template, relative) for step in document.steps):
                 hits.append(path)
         return hits
 

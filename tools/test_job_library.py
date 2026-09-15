@@ -190,6 +190,17 @@ class JobLibraryTests(unittest.TestCase):
             [destination.relative_to(self.root).as_posix()],
         )
 
+    def test_find_by_name_matches_file_stem_and_safe_name(self):
+        self.library.create_category("仓库")
+        path = self.save_job(
+            f"仓库/farm_8z3_once{JOB_FILE_SUFFIX}",
+            name="每日刷关",
+            category="仓库",
+        )
+        self.assertEqual(self.library.find_by_name("farm_8z3_once"), path)
+        self.assertEqual(self.library.find_by_name("每日刷关"), path)
+        self.assertEqual(self.library.find_by_name(" 每日刷关 "), path)
+
     def test_delete_job_removes_prerequisite_references(self):
         self.library.create_category("来源")
         self.library.create_category("依赖")

@@ -12,6 +12,7 @@ from scrcpy_input import (
     is_running,
     launch_args,
     map_device_to_client,
+    overlay_window_exstyle,
     overlay_window_style,
     parse_scrcpy_version,
     _WS_CAPTION,
@@ -51,6 +52,7 @@ class ScrcpyMappingTests(unittest.TestCase):
         self.assertTrue(overlay & _WS_POPUP)
         self.assertFalse(overlay & _WS_CAPTION)
         self.assertFalse(overlay & _WS_CHILD)
+        self.assertFalse(overlay_window_exstyle(_WS_EX_APPWINDOW) & _WS_EX_APPWINDOW)
 
     @patch("scrcpy_input.read_scrcpy_version", return_value=(3, 2))
     def test_launch_args_are_borderless_for_embed(self, _version):
@@ -61,11 +63,12 @@ class ScrcpyMappingTests(unittest.TestCase):
         self.assertIn("--window-height=800", args)
         self.assertIn("--window-x=40", args)
         self.assertIn("--window-y=80", args)
-        self.assertIn("--mouse=uhid", args)
+        self.assertNotIn("--mouse=uhid", args)
+        self.assertNotIn("--keyboard=uhid", args)
         self.assertIn("--window-title=NnMaa-41292426", args)
 
     @patch("scrcpy_input.read_scrcpy_version", return_value=(2, 0))
-    def test_launch_args_omit_uhid_before_2_4(self, _version):
+    def test_launch_args_stay_borderless_on_old_scrcpy(self, _version):
         args = launch_args(Path("scrcpy.exe"), "abc")
         self.assertIn("--window-borderless", args)
         self.assertNotIn("--mouse=uhid", args)
